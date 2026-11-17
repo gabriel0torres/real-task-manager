@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     default_timezone: str = "America/Sao_Paulo"
     auto_migrate: bool = True
     log_level: str = "INFO"
+    # Run the scheduling engine inside the API process (dev / single-process setups).
+    embedded_worker: bool = False
+    # Max bytes of log stored per run; output beyond this is dropped (with a notice).
+    max_log_bytes: int = 5_000_000
+    # Seconds a scheduled fire may be late before the missed-run policy applies.
+    misfire_grace_seconds: int = 60
 
     @field_validator("data_dir")
     @classmethod
@@ -38,9 +44,14 @@ class Settings(BaseSettings):
     def workspaces_dir(self) -> Path:
         return self.data_dir / "workspaces"
 
+    @property
+    def tmp_dir(self) -> Path:
+        return self.data_dir / "tmp"
+
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.workspaces_dir.mkdir(parents=True, exist_ok=True)
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

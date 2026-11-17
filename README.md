@@ -22,6 +22,15 @@ Rodar a API (aplica as migrations automaticamente):
 uvicorn rts.main:create_app --factory --reload
 ```
 
+Rodar o motor de agendamento (processo separado, assim a queda da interface não
+interrompe as execuções):
+
+```bash
+rts-worker
+```
+
+Para desenvolvimento, dá para rodar tudo num processo só com `RTS_EMBEDDED_WORKER=true`.
+
 - Swagger: http://127.0.0.1:8000/api/docs
 - Dados (SQLite + chave secreta) ficam em `./data` (configurável por `RTS_DATA_DIR`).
 

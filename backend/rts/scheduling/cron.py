@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.triggers.base import BaseTrigger
@@ -225,6 +225,25 @@ def build_trigger(expressions: list[str], timezone: str) -> BaseTrigger:
     for expr in expressions:
         triggers.extend(_triggers_for(parse_cron(expr), tz))
     return triggers[0] if len(triggers) == 1 else OrTrigger(triggers)
+
+
+def fire_times_between(
+    expressions: list[str], timezone: str, start: datetime, end: datetime, limit: int = 1000
+) -> list[datetime]:
+    """Fire times in the interval ``(start, end]`` (start exclusive), at most ``limit`` items."""
+    trigger = build_trigger(expressions, timezone)
+    tz = get_timezone(timezone)
+    # Cron fires on whole minutes, so +1s makes the start exclusive.
+    now = (start + timedelta(seconds=1)).astimezone(tz)
+    result: list[datetime] = []
+    previous: datetime | None = None
+    while len(result) < limit:
+        nxt = trigger.get_next_fire_time(previous, now)
+        if nxt is None or nxt > end:
+            break
+        result.append(nxt)
+        previous = now = nxt
+    return result
 
 
 def next_fire_times(

@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from rts import __version__
-from rts.api.routes import groups, subcategories, system, tasks, variables
+from rts.api.routes import groups, runs, subcategories, system, tasks, variables
 from rts.config import Settings, get_settings
 from rts.db import make_engine, make_session_factory
 from rts.security.crypto import SecretBox, load_secret_key
@@ -45,8 +45,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             upgrade_to_head(engine)
         log.info("RTS %s iniciado (banco: %s)", __version__, engine.url.render_as_string())
-        yield
-        engine.dispose()
+        scheduler_engine = None
+        if settings.embedded_worker:
+            from rts.engine.context import EngineContext
+            from rts.engine.scheduler import SchedulerEngine
+
+            scheduler_engine = SchedulerEngine(
+                EngineContext(settings, app.state.session_factory, secret_box)
+            )
+            scheduler_engine.start()
+            app.state.scheduler_engine = scheduler_engine
+            log.info("Motor de agendamento embutido na API (RTS_EMBEDDED_WORKER=true).")
+        try:
+            yield
+        finally:
+            if scheduler_engine is not None:
+                scheduler_engine.stop()
+            engine.dispose()
 
     app = FastAPI(
         title="Real Task Scheduler",
@@ -76,7 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    for module in (groups, subcategories, tasks, variables, system):
+    for module in (groups, subcategories, tasks, variables, runs, system):
         app.include_router(module.router, prefix=API_PREFIX)
 
     return app

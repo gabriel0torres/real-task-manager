@@ -17,6 +17,7 @@ dependencies = [
     "cryptography>=42",
     "apscheduler>=3.11,<4",
     "tzdata>=2024.1",
+    "psutil>=6",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ dev = [
 
 [project.scripts]
 rts-api = "rts.main:run"
+rts-worker = "rts.worker:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "rts.__version__" }
