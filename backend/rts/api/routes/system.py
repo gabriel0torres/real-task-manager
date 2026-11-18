@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 
 from fastapi import APIRouter
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from rts import __version__
 from rts.api.deps import SessionDep, SettingsDep
+from rts.engine.process import default_shell
 from rts.scheduling.cron import CronError, get_timezone, next_fire_times, normalize_expression
 from rts.scheduling.describe import describe
 from rts.services.settings import (
@@ -108,6 +110,44 @@ def update_settings(data: GeneralSettingsUpdate, session: SessionDep, settings: 
         bump_config_revision(session)
         session.commit()
     return get_settings(session, settings)
+
+
+# --------------------------------------------------------------------------- system info
+class SystemInfoOut(BaseModel):
+    version: str
+    platform: str = Field(description="windows | linux | darwin")
+    default_shell: str = Field(description="Shell usado quando a tarefa não define um.")
+    metadata_variables: dict[str, str] = Field(
+        description="Variáveis RTS_* que o RTS injeta em toda execução, com descrição."
+    )
+
+
+METADATA_VARIABLES = {
+    "RTS_RUN_ID": "Número da execução",
+    "RTS_TASK_ID": "ID da tarefa",
+    "RTS_TASK": "Nome da tarefa",
+    "RTS_SUBCATEGORY": "Nome da subcategoria",
+    "RTS_GROUP": "Nome do grupo",
+    "RTS_ATTEMPT": "Número da tentativa (1, 2, ...)",
+    "RTS_TRIGGER": "Gatilho: scheduled, manual, retry ou api",
+    "RTS_SCHEDULED_FOR": "Horário agendado (ISO 8601) ou vazio",
+}
+
+
+@router.get(
+    "/system/info",
+    response_model=SystemInfoOut,
+    tags=["Sistema"],
+    summary="Informações do servidor",
+)
+def system_info():
+    platform = {"win32": "windows", "darwin": "darwin"}.get(sys.platform, "linux")
+    return SystemInfoOut(
+        version=__version__,
+        platform=platform,
+        default_shell=default_shell().value,
+        metadata_variables=METADATA_VARIABLES,
+    )
 
 
 # --------------------------------------------------------------------------- health

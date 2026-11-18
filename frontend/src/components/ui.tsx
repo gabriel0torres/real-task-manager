@@ -210,6 +210,37 @@ export function ErrorBox({ error }: { error: unknown }) {
   );
 }
 
+export function Modal({
+  title,
+  open,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  open: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 pt-[10vh]"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+    >
+      <div role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} className="w-full max-w-lg rounded-lg bg-white shadow-xl ring-1 ring-slate-200">
+        <header className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+          <button type="button" aria-label="Fechar" onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100">
+            ✕
+          </button>
+        </header>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export function Badge({
   children,
   tone = "slate",

@@ -15,6 +15,16 @@ def test_health(client):
     assert client.get(f"{API}/health").json() == {"status": "ok", "version": __version__}
 
 
+def test_system_info(client):
+    import os
+
+    body = client.get(f"{API}/system/info").json()
+    assert body["version"] == __version__
+    assert body["default_shell"] == ("cmd" if os.name == "nt" else body["default_shell"])
+    assert body["default_shell"] in {"cmd", "bash", "sh"}
+    assert "RTS_RUN_ID" in body["metadata_variables"]
+
+
 def test_openapi_docs_available(client):
     assert client.get("/api/docs").status_code == 200
     paths = client.get("/api/openapi.json").json()["paths"]

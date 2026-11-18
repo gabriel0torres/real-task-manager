@@ -66,6 +66,51 @@ npm test           # testes (Vitest + Testing Library)
 npm run build      # build de produção em frontend/dist
 ```
 
+## Exportação e importação
+
+Em **Configurações** exporte o sistema inteiro; nas telas de grupo e subcategoria use o
+botão **Exportar**. O arquivo é um YAML legível e versionado (`schema_version`). Veja um
+exemplo completo em [examples/exemplo-export.yaml](examples/exemplo-export.yaml).
+
+```yaml
+schema_version: 1            # formato do arquivo (validado antes de importar)
+rts_version: 0.1.0
+exported_at: '2026-11-17T12:00:00Z'
+scope: group                 # system | group | subcategory
+secrets_mode: omit           # omit (segredos sem valor) | encrypted (cifrados com senha)
+groups:
+- name: exemplo
+  active: true
+  variables:
+  - key: API_TOKEN
+    secret: true
+    value: null              # "a preencher" na importação
+  subcategories:
+  - name: relatorios
+    tasks:
+    - name: relatorio-diario
+      command: |
+        echo "várias linhas"
+      shell: bash            # bash | sh | python | powershell | pwsh | cmd | null (padrão)
+      schedule:
+        cron: ['0 7 * * *', '30 18 * * *']
+        timezone: null       # null = fuso padrão
+        description: Todos os dias às 07:00 e 18:30   # informativo
+      timeout_seconds: 600
+      retries: {max: 2, interval_seconds: 120}
+      overlap_policy: skip   # skip | queue | parallel
+      misfire_policy: ignore # ignore | run_once
+```
+
+- **Segredos**: sem valor (só as chaves, marcadas “a preencher”) ou cifrados com uma senha
+  (PBKDF2-SHA256 + Fernet). A senha é pedida na importação.
+- **Importação**: o arquivo é validado antes de qualquer alteração; a pré-visualização mostra o
+  que será criado, alterado, excluído ou pulado. Conflitos de nome podem ser resolvidos com
+  *sobrescrever* (fica igual ao arquivo), *mesclar* (mantém o que existe e acrescenta/atualiza),
+  *renomear* ou *pular* (padrão). Tarefas importadas entram **pausadas** (opção para ativar).
+  A importação é atômica: ou tudo é aplicado, ou nada.
+- O histórico de execuções não é exportado.
+
 ## Variáveis de ambiente
 
 Veja [.env.example](.env.example).

@@ -11,6 +11,7 @@ import type {
   RunStatus,
   SchedulePreview,
   Subcategory,
+  SystemInfo,
   Task,
   TaskInput,
   TreeGroup,
@@ -77,7 +78,27 @@ export const useEffectiveVariables = (taskId: number) =>
     queryFn: () => api.get<EffectiveVariable[]>(`/tasks/${taskId}/effective-variables`),
   });
 
-export const useVariables = (scope: VariableScope, ownerId: number | null) =>
+/** Variables a task inherits: from the task itself if it exists, else from its subcategory. */
+export const useAvailableVariables = (taskId: number, subcategoryId: number) =>
+  useQuery({
+    queryKey: ["variables", "available", taskId, subcategoryId],
+    queryFn: () =>
+      api.get<EffectiveVariable[]>(
+        taskId > 0
+          ? `/tasks/${taskId}/effective-variables`
+          : `/subcategories/${subcategoryId}/effective-variables`,
+      ),
+    enabled: taskId > 0 || subcategoryId > 0,
+  });
+
+export const useSystemInfo = () =>
+  useQuery({
+    queryKey: ["system-info"],
+    queryFn: () => api.get<SystemInfo>("/system/info"),
+    staleTime: Infinity,
+  });
+
+export const useVariables =(scope: VariableScope, ownerId: number | null) =>
   useQuery({
     queryKey: ["variables", scope, ownerId],
     queryFn: () =>

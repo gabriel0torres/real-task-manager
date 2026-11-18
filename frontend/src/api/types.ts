@@ -204,6 +204,13 @@ export interface Dashboard {
   worker: WorkerStatus;
 }
 
+export interface SystemInfo {
+  version: string;
+  platform: "windows" | "linux" | "darwin";
+  default_shell: Shell;
+  metadata_variables: Record<string, string>;
+}
+
 export interface GeneralSettings {
   default_timezone: string;
 }

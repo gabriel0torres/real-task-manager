@@ -1,14 +1,23 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
+  useAvailableVariables,
   useCreateTask,
   useSettings,
   useSubcategory,
+  useSystemInfo,
   useTask,
   useUpdateTask,
 } from "../api/hooks";
-import type { MisfirePolicy, OverlapPolicy, Shell, Task, TaskInput } from "../api/types";
+import type {
+  MisfirePolicy,
+  OverlapPolicy,
+  Shell,
+  SystemInfo,
+  Task,
+  TaskInput,
+} from "../api/types";
 import { useToast } from "../components/Toast";
 import {
   Button,
@@ -20,13 +29,14 @@ import {
   PageHeader,
   Select,
   Spinner,
-  Textarea,
 } from "../components/ui";
 import { ScheduleBuilder } from "../features/schedule/ScheduleBuilder";
+import { CommandEditor, type CommandEditorHandle } from "../features/tasks/CommandEditor";
+import { VariablesPanel } from "../features/tasks/VariablesPanel";
 import { listTimeZones, MISFIRE_LABELS, OVERLAP_LABELS } from "../lib/format";
+import { findSyntaxIssues, fixSyntaxIssues, SHELL_LABELS } from "../lib/shellVars";
 
-const SHELLS: { value: Shell | ""; label: string }[] = [
-  { value: "", label: "Padrão do sistema (bash/sh no Linux, cmd no Windows)" },
+const SHELLS: { value: Shell; label: string }[] = [
   { value: "bash", label: "bash" },
   { value: "sh", label: "sh" },
   { value: "python", label: "Python" },
@@ -76,14 +86,18 @@ function toInput(task: Task): TaskInput {
 }
 
 function TaskForm({
+  taskId,
   initial,
   defaultTimezone,
+  systemInfo,
   onSubmit,
   busy,
   submitLabel,
 }: {
+  taskId: number;
   initial: TaskInput;
   defaultTimezone: string;
+  systemInfo: SystemInfo;
   onSubmit: (data: TaskInput) => void;
   busy: boolean;
   submitLabel: string;
@@ -93,11 +107,32 @@ function TaskForm({
   const [scheduleProblem, setScheduleProblem] = useState<string | null>(null);
   const [showProblem, setShowProblem] = useState(false);
   const set = (patch: Partial<TaskInput>) => setData((d) => ({ ...d, ...patch }));
+  const editor = useRef<CommandEditorHandle>(null);
+  const { data: available } = useAvailableVariables(taskId, data.subcategory_id);
+
+  const defaultShell = systemInfo.default_shell;
+  const shell = data.shell ?? defaultShell;
+  const editorVariables = useMemo(
+    () => [
+      ...(available ?? []).map((v) => ({
+        key: v.key,
+        detail: v.is_secret ? "secreta" : (v.value ?? ""),
+      })),
+      ...Object.entries(systemInfo.metadata_variables).map(([key, detail]) => ({ key, detail })),
+    ],
+    [available, systemInfo],
+  );
+  const syntaxIssues = findSyntaxIssues(
+    data.command,
+    shell,
+    editorVariables.map((v) => v.key),
+  );
+  const commandMissing = showProblem && !data.command.trim();
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setShowProblem(true);
-    if (scheduleProblem) return;
+    if (scheduleProblem || !data.command.trim()) return;
     onSubmit({ ...data, name: data.name.trim(), working_dir: data.working_dir?.trim() || null });
   };
 
@@ -129,21 +164,6 @@ function TaskForm({
 
       <Card title="Comando">
         <div className="space-y-4">
-          <Field
-            label="Comando ou script"
-            htmlFor="task-command"
-            hint="Pode ter várias linhas. Variáveis ficam disponíveis como variáveis de ambiente (ex.: $API_URL)."
-          >
-            <Textarea
-              id="task-command"
-              required
-              rows={6}
-              spellCheck={false}
-              className="font-mono text-xs"
-              value={data.command}
-              onChange={(e) => set({ command: e.target.value })}
-            />
-          </Field>
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Interpretador" htmlFor="task-shell">
               <Select
@@ -151,6 +171,7 @@ function TaskForm({
                 value={data.shell ?? ""}
                 onChange={(e) => set({ shell: (e.target.value || null) as Shell | null })}
               >
+                <option value="">Padrão do servidor: {SHELL_LABELS[defaultShell]}</option>
                 {SHELLS.map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
@@ -170,6 +191,50 @@ function TaskForm({
                 onChange={(e) => set({ working_dir: e.target.value })}
               />
             </Field>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="space-y-2 lg:col-span-2">
+              <label htmlFor="task-command" className="block text-sm font-medium text-slate-700">
+                Comando ou script
+              </label>
+              <CommandEditor
+                ref={editor}
+                id="task-command"
+                value={data.command}
+                onChange={(command) => set({ command })}
+                shell={shell}
+                variables={editorVariables}
+              />
+              {syntaxIssues.length > 0 && (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-start justify-between gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200"
+                >
+                  <div className="space-y-0.5">
+                    {syntaxIssues.map((issue) => (
+                      <p key={issue.found}>
+                        <code className="font-mono font-semibold">{issue.found}</code> não é expandida pelo{" "}
+                        {SHELL_LABELS[shell]}; use <code className="font-mono font-semibold">{issue.suggestion}</code>.
+                      </p>
+                    ))}
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => set({ command: fixSyntaxIssues(data.command, syntaxIssues) })}
+                  >
+                    Corrigir automaticamente
+                  </Button>
+                </div>
+              )}
+              {commandMissing && <ErrorBox error="Informe o comando." />}
+            </div>
+            <VariablesPanel
+              shell={shell}
+              variables={available ?? []}
+              metadata={systemInfo.metadata_variables}
+              isNewTask={!taskId}
+              onInsert={(key) => editor.current?.insertVariable(key)}
+            />
           </div>
         </div>
       </Card>
@@ -286,12 +351,13 @@ export function TaskFormPage() {
   const subcategoryId = task?.subcategory_id ?? Number(search.get("subcategoryId"));
   const { data: sub } = useSubcategory(subcategoryId || 0);
   const { data: settings } = useSettings();
+  const { data: systemInfo } = useSystemInfo();
   const create = useCreateTask();
   const update = useUpdateTask();
 
   if (taskId && isLoading) return <Spinner />;
   if (!subcategoryId) return <ErrorBox error="Informe a subcategoria (subcategoryId)." />;
-  if (!settings) return <Spinner />;
+  if (!settings || !systemInfo) return <Spinner />;
 
   const handleSubmit = (data: TaskInput) => {
     if (task) {
@@ -330,6 +396,8 @@ export function TaskFormPage() {
       />
       <TaskForm
         key={task?.updated_at ?? "new"}
+        taskId={task?.id ?? 0}
+        systemInfo={systemInfo}
         initial={task ? toInput(task) : emptyTask(subcategoryId)}
         defaultTimezone={settings.default_timezone}
         busy={create.isPending || update.isPending}

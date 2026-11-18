@@ -94,7 +94,7 @@ def test_paused_group_pauses_subcategory_effectively(client, make):
 def test_task_create_defaults_and_derived_fields(client, make):
     g, s, _ = make.tree()
     t = make.task(s["id"], "relatorio", cron_expressions=["  30 8  * * MON ", "0 0 L * *"])
-    assert t["cron_expressions"] == ["30 8 * * mon", "0 0 l * *"]
+    assert t["cron_expressions"] == ["30 8 * * mon", "0 0 L * *"]
     assert t["group_id"] == g["id"]
     assert t["timezone"] is None and t["effective_timezone"] == "America/Sao_Paulo"
     assert t["overlap_policy"] == "skip" and t["misfire_policy"] == "ignore"

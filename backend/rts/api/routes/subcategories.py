@@ -5,7 +5,9 @@ from fastapi import APIRouter, status
 from rts.api.deps import SessionDep
 from rts.schemas.common import ErrorOut
 from rts.schemas.hierarchy import SubcategoryCreate, SubcategoryOut, SubcategoryUpdate
+from rts.schemas.variables import EffectiveVariableOut
 from rts.services import hierarchy as svc
+from rts.services.variables import inherited_variables
 
 router = APIRouter(
     prefix="/subcategories", tags=["Subcategorias"], responses={404: {"model": ErrorOut}}
@@ -33,6 +35,15 @@ def create_subcategory(data: SubcategoryCreate, session: SessionDep):
 @router.get("/{subcategory_id}", response_model=SubcategoryOut, summary="Obter subcategoria")
 def get_subcategory(subcategory_id: int, session: SessionDep):
     return svc.get_subcategory(session, subcategory_id)
+
+
+@router.get(
+    "/{subcategory_id}/effective-variables",
+    response_model=list[EffectiveVariableOut],
+    summary="Variáveis herdadas por tarefas desta subcategoria (Global → Grupo → Subcategoria)",
+)
+def get_inherited_variables(subcategory_id: int, session: SessionDep):
+    return inherited_variables(session, svc.get_subcategory(session, subcategory_id))
 
 
 @router.patch(

@@ -116,6 +116,21 @@ def test_effective_variables_inheritance(client, make):
     assert eff["API_KEY"]["value"] is None and eff["API_KEY"]["is_secret"] is True
 
 
+def test_subcategory_inherited_variables_for_new_tasks(client, make):
+    g, s, t = make.tree()
+    make.variable("global", "ENV", "prod")
+    make.variable("group", "ENV", "grupo", owner_id=g["id"])
+    make.variable("subcategory", "DIR", "/x", owner_id=s["id"])
+    make.variable("task", "ONLY_TASK", "1", owner_id=t["id"])  # not inherited by new tasks
+    eff = client.get(f"{API}/subcategories/{s['id']}/effective-variables").json()
+    assert [(v["key"], v["value"], v["source"]["scope"]) for v in eff] == [
+        ("DIR", "/x", "subcategory"),
+        ("ENV", "grupo", "group"),
+    ]
+    assert eff[1]["overrides"][0]["scope"] == "global"
+    assert client.get(f"{API}/subcategories/999/effective-variables").status_code == 404
+
+
 def test_task_level_overrides_everything(client, make):
     g, s, t = make.tree()
     make.variable("global", "X", "1")

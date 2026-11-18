@@ -19,6 +19,7 @@ data/
 # Frontend
 node_modules/
 frontend/dist/
+*.tsbuildinfo
 coverage/
 
 # Editors / OS

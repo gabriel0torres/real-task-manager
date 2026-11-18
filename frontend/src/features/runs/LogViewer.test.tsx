@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import { RunStatusBadge } from "../../components/StatusBadge";
 import { LogViewer } from "./LogViewer";
@@ -21,9 +22,26 @@ describe("LogViewer", () => {
     expect(screen.getByText("erro!")).toHaveClass("text-red-300");
   });
 
-  it("shows a placeholder when empty", () => {
+  it("shows a placeholder when empty (no copy button)", () => {
     render(<LogViewer chunks={[]} />);
     expect(screen.getByText("Sem saída até o momento.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copiar log" })).not.toBeInTheDocument();
+  });
+
+  it("copies the whole log as plain text", async () => {
+    vi.stubGlobal("isSecureContext", true);
+    const user = userEvent.setup(); // installs a clipboard stub on navigator
+    render(
+      <LogViewer
+        chunks={[
+          { seq: 1, ts: "", stream: "system", content: "[RTS] início\n" },
+          { seq: 2, ts: "", stream: "stdout", content: "linha 1\n" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Copiar log" }));
+    expect(await screen.findByText("Copiado!")).toBeInTheDocument();
+    expect(await navigator.clipboard.readText()).toBe("[RTS] início\nlinha 1\n");
   });
 });
 

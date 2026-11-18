@@ -156,7 +156,8 @@ def parse_cron(expression: str) -> ParsedCron:
     dom_star = parts[2].startswith("*")
     dow_star = parts[4].startswith("*")
     result = ParsedCron(
-        expression=" ".join(parts),
+        # Canonical form keeps the conventional upper-case "L" (last day of month).
+        expression=" ".join([*parts[:2], parts[2].replace("l", "L"), *parts[3:]]),
         minutes=frozenset(minutes),
         hours=frozenset(hours),
         days=frozenset(days),

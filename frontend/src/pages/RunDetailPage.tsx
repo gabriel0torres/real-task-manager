@@ -1,6 +1,6 @@
-import { Download, Square } from "lucide-react";
+import { ArrowLeft, Download, Square } from "lucide-react";
 import type { ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { API_BASE } from "../api/client";
 import { useCancelRun, useRun } from "../api/hooks";
@@ -22,19 +22,42 @@ function Info({ label, children }: { label: string; children: ReactNode }) {
 
 export function RunDetailPage() {
   const runId = Number(useParams().runId);
+  const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
   const { data: run, isLoading, error } = useRun(runId);
   const stream = useRunLogStream(runId);
   const cancel = useCancelRun();
 
+  // Back to where the user came from; if the page was opened directly (shared
+  // link, new tab), go to the task's run history instead.
+  const cameFromApp = location.key !== "default";
+  const goBack = () => {
+    if (cameFromApp) navigate(-1);
+    else navigate(run ? `/tasks/${run.task_id}?tab=runs` : "/runs");
+  };
+  const backButton = (
+    <Button variant="ghost" size="sm" icon={<ArrowLeft className="size-4" />} onClick={goBack} className="-ml-2 mb-2">
+      {cameFromApp ? "Voltar" : "Ver execuções da tarefa"}
+    </Button>
+  );
+
   if (isLoading) return <Spinner />;
-  if (error || !run) return <ErrorBox error={error ?? "Execução não encontrada."} />;
+  if (error || !run) {
+    return (
+      <>
+        {backButton}
+        <ErrorBox error={error ?? "Execução não encontrada."} />
+      </>
+    );
+  }
 
   const status = stream.status ?? run.status;
   const active = ACTIVE_RUN_STATUSES.includes(status);
 
   return (
     <>
+      {backButton}
       <PageHeader
         breadcrumb={
           <Link to={`/tasks/${run.task_id}`} className="hover:underline">

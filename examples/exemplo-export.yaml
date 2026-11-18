@@ -1,0 +1,95 @@
+# Real Task Scheduler - exportação (grupo)
+# Gerado em 2026-11-17T12:00:00Z pelo RTS 0.1.0; segredos exportados SEM valor (a preencher na importação).
+# O histórico de execuções não é exportado.
+schema_version: 1
+rts_version: 0.1.0
+exported_at: '2026-11-17T12:00:00Z'
+scope: group
+secrets_mode: omit
+groups:
+- name: exemplo
+  description: Grupo de exemplo do Real Task Scheduler
+  active: true
+  variables:
+  - key: API_TOKEN
+    secret: true
+    value: null
+    description: Token de acesso (preencher na importação)
+  - key: API_URL
+    value: https://api.exemplo.com.br
+    description: Endereço da API
+  subcategories:
+  - name: manutencao
+    description: Rotinas de limpeza
+    active: true
+    variables: []
+    tasks:
+    - name: limpar-temporarios
+      description: Remove arquivos temporários com mais de 7 dias, a cada 30 minutos em dias úteis
+      command: |
+        find /tmp/exemplo -type f -mtime +7 -delete
+      shell: sh
+      working_dir: null
+      active: true
+      schedule:
+        cron:
+        - '*/30 * * * 1-5'
+        timezone: null
+        description: A cada 30 minutos, de segunda a sexta
+      timeout_seconds: null
+      retries:
+        max: 0
+        interval_seconds: 60
+      overlap_policy: skip
+      misfire_policy: ignore
+      variables: []
+  - name: relatorios
+    description: Relatórios periódicos
+    active: true
+    variables:
+    - key: REPORT_DIR
+      value: /data/relatorios
+    tasks:
+    - name: fechamento-mensal
+      description: Consolida o mês no último dia, às 23:00
+      command: |
+        import os
+        print('Fechando o mês em', os.environ['REPORT_DIR'])
+      shell: python
+      working_dir: null
+      active: true
+      schedule:
+        cron:
+        - 0 23 L * *
+        timezone: America/Sao_Paulo
+        description: No último dia do mês às 23:00
+      timeout_seconds: 3600
+      retries:
+        max: 0
+        interval_seconds: 60
+      overlap_policy: queue
+      misfire_policy: run_once
+      variables: []
+    - name: relatorio-diario
+      description: Gera o resumo do dia de manhã e no fim da tarde
+      command: |
+        echo "Gerando relatório em $REPORT_DIR"
+        curl -fsS -H "Authorization: Bearer $API_TOKEN" "$API_URL/resumo" -o "$REPORT_DIR/resumo-$(date +%F).json"
+      shell: bash
+      working_dir: null
+      active: true
+      schedule:
+        cron:
+        - 0 7 * * *
+        - 30 18 * * *
+        timezone: null
+        description: Todos os dias às 07:00 e 18:30
+      timeout_seconds: 600
+      retries:
+        max: 2
+        interval_seconds: 120
+      overlap_policy: skip
+      misfire_policy: ignore
+      variables:
+      - key: FORMATO
+        value: json

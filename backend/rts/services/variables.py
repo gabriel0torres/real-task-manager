@@ -157,21 +157,29 @@ class ResolvedVariable:
     overridden: list[tuple[Variable, str | None]] = field(default_factory=list)
 
 
-def _chain(session: Session, task: Task) -> list[tuple[VariableScope, int | None, str | None]]:
-    sub: Subcategory = task.subcategory
+Chain = list[tuple[VariableScope, int | None, str | None]]
+
+
+def _subcategory_chain(sub: Subcategory) -> Chain:
     group: Group = sub.group
     return [
         (VariableScope.GLOBAL, None, None),
         (VariableScope.GROUP, group.id, group.name),
         (VariableScope.SUBCATEGORY, sub.id, sub.name),
-        (VariableScope.TASK, task.id, task.name),
     ]
+
+
+def _chain(task: Task) -> Chain:
+    return [*_subcategory_chain(task.subcategory), (VariableScope.TASK, task.id, task.name)]
 
 
 def resolve(session: Session, task: Task) -> list[ResolvedVariable]:
     """Resolve the effective variables of a task, most specific level winning."""
-    chain = _chain(session, task)
-    assert [c[0] for c in chain] == list(SCOPE_PRECEDENCE)
+    return _resolve_chain(session, _chain(task))
+
+
+def _resolve_chain(session: Session, chain: Chain) -> list[ResolvedVariable]:
+    assert [c[0] for c in chain] == list(SCOPE_PRECEDENCE[: len(chain)])
     resolved: dict[str, ResolvedVariable] = {}
     for scope, owner_id, owner_name in chain:
         for var in session.scalars(select(Variable).where(*_scope_filter(scope, owner_id))):
@@ -189,7 +197,7 @@ def _source(var: Variable, owner_name: str | None) -> VariableSource:
     )
 
 
-def effective_variables(session: Session, task: Task) -> list[EffectiveVariableOut]:
+def _to_effective(items: list[ResolvedVariable]) -> list[EffectiveVariableOut]:
     return [
         EffectiveVariableOut(
             key=r.key,
@@ -199,8 +207,17 @@ def effective_variables(session: Session, task: Task) -> list[EffectiveVariableO
             source=_source(r.variable, r.owner_name),
             overrides=[_source(v, n) for v, n in reversed(r.overridden)],
         )
-        for r in resolve(session, task)
+        for r in items
     ]
+
+
+def effective_variables(session: Session, task: Task) -> list[EffectiveVariableOut]:
+    return _to_effective(resolve(session, task))
+
+
+def inherited_variables(session: Session, sub: Subcategory) -> list[EffectiveVariableOut]:
+    """What a (new) task created in this subcategory inherits."""
+    return _to_effective(_resolve_chain(session, _subcategory_chain(sub)))
 
 
 @dataclass

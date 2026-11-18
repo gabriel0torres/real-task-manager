@@ -1,4 +1,4 @@
-import { Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { Download, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -15,6 +15,7 @@ import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
 import { TaskTable } from "../features/tasks/TaskTable";
+import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
 
 export function SubcategoryFormPage() {
@@ -67,6 +68,7 @@ export function SubcategoryPage() {
   const update = useUpdateSubcategory();
   const remove = useDeleteSubcategory();
   const [editing, setEditing] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   if (isLoading) return <Spinner />;
   if (error || !sub) return <ErrorBox error={error ?? "Subcategoria não encontrada."} />;
@@ -116,11 +118,21 @@ export function SubcategoryPage() {
             <Button icon={<Pencil className="size-4" />} onClick={() => setEditing((v) => !v)}>
               Editar
             </Button>
+            <Button icon={<Download className="size-4" />} onClick={() => setExportOpen(true)}>
+              Exportar
+            </Button>
             <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={handleDelete}>
               Excluir
             </Button>
           </>
         }
+      />
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        scope="subcategory"
+        id={sub.id}
+        label={`a subcategoria ${sub.name}`}
       />
       <div className="space-y-6">
         {editing && (

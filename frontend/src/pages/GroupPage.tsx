@@ -1,4 +1,4 @@
-import { Layers, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { Download, Layers, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -13,6 +13,7 @@ import { EntityForm } from "../components/EntityForm";
 import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
 
 export function GroupFormPage() {
@@ -51,6 +52,7 @@ export function GroupPage() {
   const update = useUpdateGroup();
   const remove = useDeleteGroup();
   const [editing, setEditing] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   if (isLoading) return <Spinner />;
   if (error || !group) return <ErrorBox error={error ?? "Grupo não encontrado."} />;
@@ -95,11 +97,21 @@ export function GroupPage() {
             <Button icon={<Pencil className="size-4" />} onClick={() => setEditing((v) => !v)}>
               Editar
             </Button>
+            <Button icon={<Download className="size-4" />} onClick={() => setExportOpen(true)}>
+              Exportar
+            </Button>
             <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={handleDelete}>
               Excluir
             </Button>
           </>
         }
+      />
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        scope="group"
+        id={group.id}
+        label={`o grupo ${group.name}`}
       />
       <div className="space-y-6">
         {editing && (
