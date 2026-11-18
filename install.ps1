@@ -34,6 +34,16 @@ $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Info($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
+
+# When run by the web updater (update.ps1), report steps to its progress log.
+function Report-Progress([string] $step, [string] $status, [string] $detail = "") {
+    if (-not $env:RTS_UPDATE_PROGRESS) { return }
+    $event = [ordered]@{ step = $step; status = $status; at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") }
+    if ($detail) { $event.detail = $detail }
+    try {
+        [IO.File]::AppendAllText($env:RTS_UPDATE_PROGRESS, (($event | ConvertTo-Json -Compress) + "`n"), (New-Object Text.UTF8Encoding $false))
+    } catch { }
+}
 function Warn($msg) { Write-Host "AVISO: $msg" -ForegroundColor Yellow }
 function Fail($msg) { Write-Host "ERRO: $msg" -ForegroundColor Red; exit 1 }
 
@@ -208,6 +218,7 @@ if ($Mode -eq "python") {
     }
     $vpy = Join-Path $venv "Scripts\python.exe"
     Info "Instalando o pacote (pode levar alguns minutos)..."
+    Report-Progress "install" "running" "instalando o pacote Python e as dependências"
     $pipHint = " Se o RTS estiver em execução (por exemplo com 'rts.cmd start'), feche-o e rode o instalador de novo."
     & $vpy -m pip install --upgrade --quiet --disable-pip-version-check pip
     & $vpy -m pip install --upgrade --force-reinstall --no-deps --quiet --disable-pip-version-check "$wheel"
@@ -225,6 +236,7 @@ if ($Mode -eq "python") {
         catch { Fail "Não foi possível substituir $app (o RTS está em execução?). Feche-o e rode o instalador de novo. ($_)" }
     }
     Info "Extraindo o executável..."
+    Report-Progress "install" "running" "extraindo o executável"
     Expand-Archive -Path $zip -DestinationPath $app -Force
     $Runner = Join-Path $app "rts\rts.exe"
 }
@@ -257,8 +269,10 @@ RTS_DEFAULT_TIMEZONE=America/Sao_Paulo
 Set-EnvValue "RTS_INSTALL_TYPE" $Mode
 
 # Updater used by "Atualizar" in the web interface. It runs from the scheduled task
-# "RTS Update" (outside the RTS processes, which it stops), backs up the database and
-# runs the installer of the requested version.
+# "RTS Update" (outside the RTS processes, which it stops). Order: download the new
+# version while the RTS still runs, then stop it, back up the database, install and
+# wait for the new API. Each step is appended to data\update-progress.log, which the
+# web interface shows while the update runs.
 $updater = @'
 # Atualizador do Real Task Scheduler - iniciado pela tarefa agendada "RTS Update".
 $ErrorActionPreference = "Continue"
@@ -268,46 +282,135 @@ $InstallDir = $PSScriptRoot
 $Data = Join-Path $InstallDir "data"
 $RequestFile = Join-Path $Data "update-request.json"
 $ResultFile = Join-Path $Data "update-result.json"
+$ProgressFile = Join-Path $Data "update-progress.log"
+$EnvFile = Join-Path $InstallDir ".env"
 if (-not (Test-Path $RequestFile)) { exit 0 }
 $req = Get-Content $RequestFile -Raw | ConvertFrom-Json
 Remove-Item $RequestFile -Force
+$script:Step = "start"
+
+function Progress([string] $step, [string] $status, [string] $detail = "") {
+    $script:Step = $step
+    $event = [ordered]@{ step = $step; status = $status; at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") }
+    if ($detail) { $event.detail = $detail }
+    try {
+        [IO.File]::AppendAllText($ProgressFile, (($event | ConvertTo-Json -Compress) + "`n"), (New-Object Text.UTF8Encoding $false))
+    } catch { }
+}
 
 function Save-Result([bool] $ok, [string] $message) {
-    $json = @{ ok = $ok; version = $req.version; from_version = $req.from_version;
+    $json = @{ ok = $ok; version = $req.version; from_version = $req.from_version; requested_at = $req.requested_at;
                finished_at = (Get-Date).ToUniversalTime().ToString("o"); message = $message } | ConvertTo-Json
     [IO.File]::WriteAllText($ResultFile, $json, (New-Object Text.UTF8Encoding $false))
 }
 
+function Get-EnvValue([string] $key) {
+    $line = (Get-Content $EnvFile -ErrorAction SilentlyContinue) -match "^$key=" | Select-Object -Last 1
+    if ($line) { return ($line -replace "^$key=", "").Trim() }
+    return ""
+}
+
+function Format-Mb([double] $bytes) { return "{0:N1}" -f ($bytes / 1MB) }
+
+function Get-WithProgress([string] $url, [string] $target, [string] $name) {
+    # Downloads in the background and reports "x de y MB" every 2 seconds.
+    if (Test-Path $target) { Remove-Item $target -Force }
+    $total = 0
+    try { $total = [int64] ((Invoke-WebRequest $url -Method Head -UseBasicParsing).Headers["Content-Length"] | Select-Object -First 1) } catch { }
+    $curl = Join-Path $env:SystemRoot "System32\curl.exe"
+    if (-not (Test-Path $curl)) {
+        Progress "download" "running" "$name"
+        Invoke-WebRequest $url -OutFile $target -UseBasicParsing
+        return
+    }
+    $proc = Start-Process $curl -ArgumentList @("-fsSL", "-o", "`"$target`"", "`"$url`"") -PassThru -WindowStyle Hidden
+    $null = $proc.Handle  # keeps ExitCode available after the process ends
+    while (-not $proc.HasExited) {
+        $got = if (Test-Path $target) { (Get-Item $target).Length } else { 0 }
+        $of = if ($total -gt 0) { " de $(Format-Mb $total) MB" } else { " MB" }
+        Progress "download" "running" "$name`: $(Format-Mb $got)$of"
+        Start-Sleep -Seconds 2
+    }
+    if ($proc.ExitCode) { throw "falha ao baixar $name (curl código $($proc.ExitCode))" }
+}
+
 Start-Transcript -Path (Join-Path $Data "update.log") -Append | Out-Null
+$stopped = $false
 try {
     Write-Host "Atualizando $($req.from_version) -> $($req.version)"
+    Progress "start" "done"
+    $version = $req.version
+    $plain = $version.TrimStart("v")
+    $mode = Get-EnvValue "RTS_INSTALL_TYPE"
+    if ($mode -ne "python" -and $mode -ne "standalone") {
+        $mode = if (Test-Path (Join-Path $InstallDir "venv\Scripts\python.exe")) { "python" } else { "standalone" }
+    }
+    $base = "https://github.com/$($req.repo)/releases/download/$version"
+
+    # 1. Download while the RTS keeps running: a failure here interrupts nothing.
+    Progress "download" "running" "install.ps1"
+    $installer = Join-Path $env:TEMP "rts-install-$version.ps1"
+    Invoke-WebRequest "$base/install.ps1" -OutFile $installer -UseBasicParsing
+    $asset = if ($mode -eq "python") { "rts-$plain-py3-none-any.whl" } else { "rts-$plain-windows-x64.zip" }
+    $package = Join-Path $env:TEMP $asset
+    Get-WithProgress "$base/$asset" $package $asset
+    Progress "download" "done" "$asset ($(Format-Mb (Get-Item $package).Length) MB)"
+
+    # 2. Stop the RTS.
+    Progress "stop" "running"
     Stop-ScheduledTask "RTS Worker" -ErrorAction SilentlyContinue
     Stop-ScheduledTask "RTS API" -ErrorAction SilentlyContinue
+    $stopped = $true
     Start-Sleep -Seconds 3
+    Progress "stop" "done"
+
+    # 3. Back up the SQLite database.
+    Progress "backup" "running"
     $backups = Join-Path $Data "backups"
     New-Item -ItemType Directory -Force -Path $backups | Out-Null
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $copied = 0
     foreach ($f in "rts.db", "rts.db-wal", "rts.db-shm") {
         $src = Join-Path $Data $f
-        if (Test-Path $src) { Copy-Item $src (Join-Path $backups ($f -replace "^rts", "rts-$($req.from_version)-$stamp")) }
+        if (Test-Path $src) {
+            Copy-Item $src (Join-Path $backups ($f -replace "^rts", "rts-$($req.from_version)-$stamp"))
+            $copied++
+        }
     }
-    $mode = ((Get-Content (Join-Path $InstallDir ".env")) -match "^RTS_INSTALL_TYPE=" | Select-Object -First 1) -replace "^RTS_INSTALL_TYPE=", ""
-    if (-not $mode) { $mode = "auto" }
-    $installer = Join-Path $env:TEMP "rts-install-$($req.version).ps1"
-    Invoke-WebRequest "https://github.com/$($req.repo)/releases/download/$($req.version)/install.ps1" -OutFile $installer -UseBasicParsing
-    # The installer is UTF-8 without BOM (required by "irm | iex"); "-File" would read it as
-    # ANSI on Windows PowerShell 5.1, so load it explicitly as UTF-8 in a child process.
-    # Out-Host sends its output into the transcript (data\update.log).
+    $backupNote = if ($copied) { "data\backups\rts-$($req.from_version)-$stamp.db" } else { "sem banco SQLite local (nada a copiar)" }
+    Progress "backup" "done" $backupNote
+
+    # 4. Install. The installer is UTF-8 without BOM (required by "irm | iex"); "-File"
+    # would read it as ANSI on Windows PowerShell 5.1, so load it explicitly as UTF-8 in a
+    # child process. It reports its own progress through RTS_UPDATE_PROGRESS.
+    Progress "install" "running" "modo $mode"
+    $env:RTS_UPDATE_PROGRESS = $ProgressFile
     $run = "& ([scriptblock]::Create([IO.File]::ReadAllText('$installer', [Text.Encoding]::UTF8))) " +
-           "-Version '$($req.version)' -InstallDir '$InstallDir' -Mode '$mode' -Repo '$($req.repo)'"
+           "-Version '$version' -InstallDir '$InstallDir' -Mode '$mode' -Repo '$($req.repo)' -From '$package'"
     & powershell -NoProfile -ExecutionPolicy Bypass -Command $run *>&1 | Out-Host
     if ($LASTEXITCODE) { throw "o instalador terminou com código $LASTEXITCODE" }
-    Save-Result $true "Atualizado para $($req.version)."
+    Progress "install" "done"
+
+    # 5. Wait for the new API (the installer already started the scheduled tasks).
+    Progress "restart" "running" "aguardando a API responder"
+    $port = Get-EnvValue "RTS_PORT"
+    if (-not $port) { $port = "8000" }
+    $up = $false
+    for ($i = 0; $i -lt 90 -and -not $up; $i++) {
+        try { $up = (Invoke-RestMethod "http://127.0.0.1:$port/api/v1/health" -TimeoutSec 3).version -eq $plain } catch { }
+        if (-not $up) { Start-Sleep -Seconds 1 }
+    }
+    if (-not $up) { throw "a nova versão foi instalada, mas a API não respondeu em 90 s na porta $port" }
+    Progress "restart" "done" "versão $plain respondendo na porta $port"
+    Save-Result $true "Atualizado para $version."
 } catch {
+    Progress $script:Step "failed" "$_"
     Save-Result $false "Falha na atualização: $_ (veja data\update.log)"
-    Start-ScheduledTask "RTS API" -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
-    Start-ScheduledTask "RTS Worker" -ErrorAction SilentlyContinue
+    if ($stopped) {
+        Start-ScheduledTask "RTS API" -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        Start-ScheduledTask "RTS Worker" -ErrorAction SilentlyContinue
+    }
 } finally {
     Stop-Transcript | Out-Null
 }
@@ -338,6 +441,8 @@ if ($FreshInstall) {
 }
 
 # ------------------------------------------------------------------ service
+Report-Progress "install" "done"
+Report-Progress "restart" "running" "registrando e iniciando as tarefas agendadas"
 $ServiceOk = $false
 if (-not $NoService) {
     if (-not $IsAdmin) {

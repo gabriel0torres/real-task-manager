@@ -49,14 +49,21 @@ function UpdateIndicator() {
   const canManage = Boolean(user?.permissions.includes("manage_settings"));
   const { data } = useUpdateStatus(canManage);
   if (!canManage || !data || !(data.update_available || data.update_in_progress)) return null;
+  const progress = data.progress;
   return (
     <NavLink
       to="/settings?tab=updates"
       className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200 ring-inset hover:bg-indigo-100"
-      title={data.update_in_progress ? "Atualização em andamento" : `Versão instalada: ${data.current_version}`}
+      title={
+        data.update_in_progress
+          ? `Atualização em andamento${progress ? `: ${progress.steps[progress.current_step]?.label}` : ""}`
+          : `Versão instalada: ${data.current_version}`
+      }
     >
       <ArrowUpCircle className="size-3.5" />
-      {data.update_in_progress ? "Atualizando..." : `Nova versão ${data.latest_tag}`}
+      {data.update_in_progress
+        ? `Atualizando${progress ? ` (${progress.current_step + 1}/${progress.total_steps})` : ""}...`
+        : `Nova versão ${data.latest_tag}`}
     </NavLink>
   );
 }

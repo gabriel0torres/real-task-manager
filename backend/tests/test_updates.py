@@ -174,7 +174,7 @@ def test_last_result_is_reported(app_with, github):
     )
     body = client.get(f"{API}/system/update").json()
     assert body["last_result"] == {
-        "ok": False, "version": "v99.0.0", "from_version": None,
+        "ok": False, "version": "v99.0.0", "from_version": None, "requested_at": None,
         "finished_at": None, "message": "falha no download",
     }  # fmt: skip
 
@@ -207,3 +207,102 @@ def test_real_github_response_parsing(monkeypatch):
         "notes": "notas",
         "published_at": payload["published_at"],
     }
+
+
+# --------------------------------------------------------------------------- progress
+def _event(step, status, minutes_ago=0.0, **extra):
+    at = (utcnow() - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return json.dumps({"step": step, "status": status, "at": at, **extra})
+
+
+def _append(data_dir, *lines):
+    with (data_dir / updates.PROGRESS_FILE).open("a", encoding="utf-8") as fh:
+        for line in lines:
+            fh.write(line + "\n")
+
+
+def _steps(body):
+    return {s["id"]: s for s in body["progress"]["steps"]}
+
+
+def test_progress_follows_the_updater_steps(app_with, github):
+    app, client = app_with(install_type="python", updater="systemd-path")
+    data_dir = app.state.settings.data_dir
+    (data_dir / updates.PROGRESS_FILE).write_text(_event("install", "done") + "\n")  # old run
+    assert client.post(f"{API}/settings/update/apply", json={}).status_code == 202
+
+    body = client.get(f"{API}/system/update").json()
+    progress = body["progress"]
+    assert body["update_in_progress"] is True
+    assert progress["version"] == "v99.0.0" and progress["from_version"] == __version__
+    assert [s["id"] for s in progress["steps"]] == [s for s, _ in updates.UPDATE_STEPS]
+    assert progress["total_steps"] == 7 and progress["current_step"] == 1  # waiting for updater
+    assert _steps(body)["request"]["status"] == "done"
+    assert _steps(body)["install"]["status"] == "pending"  # the old log was replaced
+
+    # The updater takes the request (removing the file) and starts downloading.
+    (data_dir / updates.REQUEST_FILE).unlink()
+    _append(
+        data_dir,
+        _event("start", "done"),
+        _event("download", "running", detail="rts.whl: 1,0 de 2,0 MB"),
+        "{corrompida",
+    )
+    body = client.get(f"{API}/system/update").json()
+    assert body["update_in_progress"] is True
+    assert body["progress"]["current_step"] == 2
+    download = _steps(body)["download"]
+    assert download["status"] == "running" and download["detail"] == "rts.whl: 1,0 de 2,0 MB"
+    assert download["started_at"] and not download["api_offline"]
+    assert _steps(body)["stop"]["api_offline"] is True
+    assert _steps(body)["start"]["started_at"]  # "done" only: starts where the previous ended
+
+    # Finished: every step done and a result written.
+    _append(
+        data_dir,
+        *(_event(step, "done") for step in ("download", "stop", "backup", "install", "restart")),
+    )
+    (data_dir / updates.RESULT_FILE).write_text(json.dumps({"ok": True, "version": "v99.0.0"}))
+    body = client.get(f"{API}/system/update").json()
+    assert body["update_in_progress"] is False
+    assert body["progress"]["completed"] is True and body["progress"]["failed"] is False
+
+
+def test_failed_or_abandoned_progress_is_not_in_progress(app_with, github):
+    app, client = app_with(install_type="python", updater="systemd-path")
+    data_dir = app.state.settings.data_dir
+    _append(
+        data_dir,
+        _event("request", "done", 40, version="v99.0.0"),
+        _event("download", "running", 35),
+    )
+    body = client.get(f"{API}/system/update").json()
+    assert body["update_in_progress"] is False  # no news for more than 30 minutes
+
+    _append(data_dir, _event("download", "failed", detail="sem rede"))
+    body = client.get(f"{API}/system/update").json()
+    assert body["update_in_progress"] is False
+    assert body["progress"]["failed"] is True and body["progress"]["current_step"] == 2
+    assert _steps(body)["download"]["detail"] == "sem rede"
+
+
+def test_duration_of_the_previous_update_is_kept_for_the_estimate(app_with, github):
+    app, client = app_with(install_type="python", updater="systemd-path")
+    data_dir = app.state.settings.data_dir
+    (data_dir / updates.RESULT_FILE).write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "requested_at": "2026-11-18T10:00:00+00:00",
+                "finished_at": "2026-11-18T10:02:15Z",
+            }
+        )
+    )
+    assert client.get(f"{API}/system/update").json()["last_duration_seconds"] is None
+    assert client.post(f"{API}/settings/update/apply", json={}).status_code == 202
+    assert client.get(f"{API}/system/update").json()["last_duration_seconds"] == 135
+
+
+def test_no_progress_log_means_no_progress(app_with, github):
+    app, client = app_with(install_type="python", updater="systemd-path")
+    assert client.get(f"{API}/system/update").json()["progress"] is None

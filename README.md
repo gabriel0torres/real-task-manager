@@ -142,12 +142,23 @@ O RTS verifica a cada 12 horas se há uma versão nova publicada no GitHub. Quan
 **“Nova versão vX.Y.Z”** no topo da tela (para quem administra as configurações) e a aba
 **Configurações → Atualizações** mostra a versão instalada, a nova e as notas da versão.
 
-- Instalações feitas pelos instaladores com o serviço registrado têm o botão **Atualizar**: um
-  atualizador separado (a tarefa agendada `RTS Update` no Windows; a unidade systemd
-  `rts-update.path` no Linux) para o RTS, copia o banco para `data/backups/`, roda o instalador da
-  nova versão e reinicia tudo. A página recarrega sozinha quando a nova versão responder.
-  Execuções em andamento são interrompidas (a tela avisa quantas). O registro fica em
-  `data/update.log`.
+- Instalações feitas pelos instaladores com o serviço registrado têm o botão **Atualizar**. Ele
+  aciona um atualizador separado: a tarefa agendada `RTS Update` no Windows, ou a unidade systemd
+  `rts-update.path` no Linux. O atualizador faz, em ordem:
+  1. baixa a nova versão, com o RTS ainda funcionando (se o download falhar, nada é interrompido);
+  2. para o RTS;
+  3. copia o banco para `data/backups/`;
+  4. instala a nova versão;
+  5. espera a nova API responder.
+
+  A aba **Atualizações** mostra cada etapa ao vivo: a etapa atual ("Etapa 3 de 7"), os MB já
+  baixados, o tempo decorrido e uma estimativa do tempo restante, baseada na duração da
+  atualização anterior. Durante as etapas com o servidor parado, a tela avisa que isso é esperado
+  e continua sozinha quando a nova versão responder. Depois, o resultado mostra quanto tempo levou
+  e permite rever as etapas.
+
+  Execuções em andamento são interrompidas; a tela avisa quantas antes de confirmar. O registro
+  completo fica em `data/update.log` e as etapas em `data/update-progress.log`.
 - Sem serviço registrado, Docker ou código-fonte: a aba mostra os comandos para atualizar. Pelos
   instaladores, basta rodar o mesmo comando de instalação de novo — o programa é substituído e a
   configuração (`.env`) e os dados (`data/`) são mantidos; as migrations do banco são aplicadas

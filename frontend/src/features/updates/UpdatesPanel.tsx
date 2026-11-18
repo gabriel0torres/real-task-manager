@@ -2,10 +2,17 @@ import { CheckCircle2, Download, ExternalLink, Loader2, RefreshCw, XCircle } fro
 import { useEffect, useRef, useState } from "react";
 
 import { useDashboard } from "../../api/hooks";
-import { serverVersion, useApplyUpdate, useCheckUpdates, useUpdateStatus } from "../../api/updates";
+import {
+  serverVersion,
+  useApplyUpdate,
+  useCheckUpdates,
+  useUpdateStatus,
+  type UpdateStatus,
+} from "../../api/updates";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, ErrorBox, Modal, Spinner } from "../../components/ui";
-import { formatDateTime, formatRelative } from "../../lib/format";
+import { formatDateTime, formatDuration, formatRelative } from "../../lib/format";
+import { UpdateProgressView } from "./UpdateProgressView";
 
 const INSTALL_LABELS = {
   docker: "Docker",
@@ -38,15 +45,27 @@ function useWaitForVersion(target: string | null, onDone: (ok: boolean) => void)
   }, [target]);
 }
 
+function lastDuration(result: NonNullable<UpdateStatus["last_result"]>): string | null {
+  if (!result.requested_at || !result.finished_at) return null;
+  const ms = new Date(result.finished_at).getTime() - new Date(result.requested_at).getTime();
+  return ms > 0 ? formatDuration(Math.round(ms / 1000) * 1000) : null;
+}
+
 export function UpdatesPanel() {
   const toast = useToast();
-  const { data, isLoading, error, refetch } = useUpdateStatus();
+  const [updatingTo, setUpdatingTo] = useState<string | null>(null);
+  const { data, isLoading, error, refetch, isRefetchError } = useUpdateStatus(true, Boolean(updatingTo));
   const { data: dashboard } = useDashboard();
   const check = useCheckUpdates();
   const apply = useApplyUpdate();
   const [confirming, setConfirming] = useState(false);
-  const [updatingTo, setUpdatingTo] = useState<string | null>(null);
   const [timedOut, setTimedOut] = useState(false);
+  const failed = Boolean(data?.progress?.failed && data.last_result && !data.last_result.ok);
+
+  // The updater gave up: stop waiting for the new version (the failure is shown below).
+  useEffect(() => {
+    if (updatingTo && failed) setUpdatingTo(null);
+  }, [updatingTo, failed]);
 
   useWaitForVersion(updatingTo, (ok) => {
     if (ok) {
@@ -60,7 +79,10 @@ export function UpdatesPanel() {
   });
 
   if (isLoading) return <Spinner />;
-  if (error || !data) return <ErrorBox error={error} />;
+  if (!data) return <ErrorBox error={error} />;
+  const live = Boolean(updatingTo) || data.update_in_progress;
+  // While the API is down for the installation, keep showing the last known progress.
+  const offline = live && isRefetchError;
 
   const running = dashboard?.running.length ?? 0;
   const startUpdate = () =>
@@ -69,6 +91,7 @@ export function UpdatesPanel() {
         setConfirming(false);
         setTimedOut(false);
         setUpdatingTo(r.version);
+        refetch();
       },
       onError: (e) => {
         setConfirming(false);
@@ -136,19 +159,54 @@ export function UpdatesPanel() {
           }
         >
           {data.last_result.ok ? <CheckCircle2 className="mt-0.5 size-4" /> : <XCircle className="mt-0.5 size-4" />}
-          <span>
-            Última atualização ({data.last_result.from_version} → {data.last_result.version},{" "}
-            {formatDateTime(data.last_result.finished_at)}): {data.last_result.message}
-          </span>
+          <div className="min-w-0 flex-1 space-y-2">
+            <p>
+              Última atualização ({data.last_result.from_version} → {data.last_result.version},{" "}
+              {formatDateTime(data.last_result.finished_at)}
+              {lastDuration(data.last_result) && <>, levou {lastDuration(data.last_result)}</>}):{" "}
+              {data.last_result.message}
+            </p>
+            {data.progress && !live && (
+              <details open={failed}>
+                <summary className="cursor-pointer text-xs font-medium">Ver etapas</summary>
+                <div className="mt-2 rounded-md bg-white p-3 text-slate-800 ring-1 ring-slate-200">
+                  <UpdateProgressView progress={data.progress} live={false} />
+                </div>
+              </details>
+            )}
+          </div>
         </div>
       )}
 
-      {(updatingTo || data.update_in_progress) && (
-        <div className="flex items-center gap-2 rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800 ring-1 ring-sky-200" role="status">
-          <Loader2 className="size-4 animate-spin" />
-          Atualizando{updatingTo ? ` para ${updatingTo}` : ""}... A API e o motor serão reiniciados; esta página
-          recarrega sozinha quando a nova versão responder.
-        </div>
+      {live && (
+        <Card
+          title={
+            <span className="flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin text-sky-600" />
+              Atualizando
+              {data.progress?.from_version && data.progress.version
+                ? ` de ${data.progress.from_version} para ${data.progress.version}`
+                : updatingTo
+                  ? ` para ${updatingTo}`
+                  : ""}
+            </span>
+          }
+        >
+          <div role="status" className="space-y-3">
+            {data.progress ? (
+              <UpdateProgressView
+                progress={data.progress}
+                live
+                offline={offline}
+                lastDurationSeconds={data.last_duration_seconds}
+              />
+            ) : (
+              <p className="text-sm text-slate-600">
+                A API e o motor serão reiniciados; esta página recarrega sozinha quando a nova versão responder.
+              </p>
+            )}
+          </div>
+        </Card>
       )}
       {timedOut && (
         <ErrorBox error="A nova versão não respondeu em 15 minutos. Verifique o log do atualizador (data/update.log)." />

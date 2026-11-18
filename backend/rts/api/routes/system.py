@@ -194,8 +194,31 @@ class UpdateResult(BaseModel):
     ok: bool | None = None
     version: str | None = None
     from_version: str | None = None
+    requested_at: str | None = None
     finished_at: str | None = None
     message: str | None = None
+
+
+class UpdateStep(BaseModel):
+    id: str
+    label: str
+    status: str = Field(description="pending | running | done | failed")
+    started_at: str | None
+    finished_at: str | None
+    detail: str | None
+    api_offline: bool = Field(description="Etapa executada com a API fora do ar.")
+
+
+class UpdateProgress(BaseModel):
+    version: str | None
+    from_version: str | None
+    started_at: str | None
+    updated_at: str | None
+    current_step: int = Field(description="Índice (0..) da etapa atual em `steps`.")
+    total_steps: int
+    failed: bool
+    completed: bool
+    steps: list[UpdateStep]
 
 
 class UpdateStatusOut(BaseModel):
@@ -212,6 +235,12 @@ class UpdateStatusOut(BaseModel):
     install_type: str = Field(description="docker | python | standalone | source")
     can_self_update: bool = Field(description="Há atualizador automático nesta instalação.")
     update_in_progress: bool
+    progress: UpdateProgress | None = Field(
+        description="Etapas da atualização em andamento (ou da última)."
+    )
+    last_duration_seconds: int | None = Field(
+        default=None, description="Duração da última atualização bem-sucedida (estimativa)."
+    )
     last_result: UpdateResult | None
     instructions: str
 

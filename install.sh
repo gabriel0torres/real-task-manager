@@ -25,6 +25,14 @@ REPO="gabriel0torres/real-task-manager"
 info() { printf '\033[36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33mAVISO: %s\033[0m\n' "$*"; }
 fail() { printf '\033[31mERRO: %s\033[0m\n' "$*" >&2; exit 1; }
+# When run by the web updater (update.sh), report steps to its progress log.
+report_progress() {  # STEP STATUS [DETAIL]
+    [ -n "${RTS_UPDATE_PROGRESS:-}" ] || return 0
+    detail=""
+    [ -n "${3:-}" ] && detail=", \"detail\": \"$3\""
+    printf '{"step": "%s", "status": "%s", "at": "%s"%s}\n' \
+        "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" >> "$RTS_UPDATE_PROGRESS" 2>/dev/null || true
+}
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -203,6 +211,7 @@ if [ "$MODE" = python ]; then
         "$PYTHON" -m venv "$VENV" || fail "falha ao criar o ambiente virtual"
     fi
     info "Instalando o pacote (pode levar alguns minutos)..."
+    report_progress install running "instalando o pacote Python e as dependências"
     "$VENV/bin/python" -m pip install --upgrade --quiet --disable-pip-version-check pip
     "$VENV/bin/python" -m pip install --upgrade --force-reinstall --no-deps --quiet --disable-pip-version-check "$WHEEL"
     "$VENV/bin/python" -m pip install --quiet --disable-pip-version-check "$WHEEL[postgres]"
@@ -213,6 +222,7 @@ else
     rm -rf "$INSTALL_DIR/app"
     mkdir -p "$INSTALL_DIR/app"
     info "Extraindo o executável..."
+    report_progress install running "extraindo o executável"
     tar -xzf "$ARCHIVE" -C "$INSTALL_DIR/app"
     RUNNER="$INSTALL_DIR/app/rts/rts"
 fi
@@ -249,9 +259,10 @@ fi
 set_env_value RTS_INSTALL_TYPE "$MODE"
 
 # Updater used by "Atualizar" in the web interface: started by rts-update.service when
-# data/update-request.json appears; it stops RTS, backs up the database and runs the
-# installer of the requested version. Written to a temp file and renamed, because a
-# running updater may be reading the current one.
+# data/update-request.json appears. Order: download the new version while the RTS still
+# runs, then stop it, back up the database, install and wait for the new API. Each step
+# is appended to data/update-progress.log, which the web interface shows. Written to a
+# temp file and renamed, because a running updater may be reading the current one.
 cat > "$INSTALL_DIR/update.sh.tmp" <<'UPDATER'
 #!/bin/sh
 # Atualizador do Real Task Scheduler (iniciado por rts-update.service).
@@ -259,38 +270,129 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA="$DIR/data"
 REQ="$DATA/update-request.json"
 RES="$DATA/update-result.json"
+PROG="$DATA/update-progress.log"
 [ -f "$REQ" ] || exit 0
 field() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" "$REQ" | head -n1; }
-VERSION="$(field version)"; FROM="$(field from_version)"; REPO="$(field repo)"
+VERSION="$(field version)"; FROM="$(field from_version)"; REPO="$(field repo)"; REQUESTED="$(field requested_at)"
 rm -f "$REQ"
-MODE="$(sed -n 's/^RTS_INSTALL_TYPE=//p' "$DIR/.env" | head -n1)"; [ -n "$MODE" ] || MODE=auto
+env_value() { sed -n "s/^$1=//p" "$DIR/.env" | tail -n1 | tr -d ' \r'; }
+MODE="$(env_value RTS_INSTALL_TYPE)"
+if [ "$MODE" != python ] && [ "$MODE" != standalone ]; then
+    if [ -x "$DIR/venv/bin/python" ]; then MODE=python; else MODE=standalone; fi
+fi
 if [ "$(id -u)" = 0 ]; then SYSTEMCTL=systemctl; else SYSTEMCTL="systemctl --user"; fi
+touch "$PROG"; chown --reference="$DATA" "$PROG" 2>/dev/null || true
+STEP=start
+progress() {  # STEP STATUS [DETAIL]
+    STEP="$1"
+    detail=""
+    if [ -n "${3:-}" ]; then
+        detail=", \"detail\": \"$(printf '%s' "$3" | tr -d '"\\' | tr '\n' ' ')\""
+    fi
+    printf '{"step": "%s", "status": "%s", "at": "%s"%s}\n' \
+        "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$detail" >> "$PROG"
+}
 result() {
-    printf '{"ok": %s, "version": "%s", "from_version": "%s", "finished_at": "%s", "message": "%s"}\n' \
-        "$1" "$VERSION" "$FROM" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2" > "$RES"
+    printf '{"ok": %s, "version": "%s", "from_version": "%s", "requested_at": "%s", "finished_at": "%s", "message": "%s"}\n' \
+        "$1" "$VERSION" "$FROM" "$REQUESTED" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(printf '%s' "$2" | tr -d '"\\')" > "$RES"
     chown --reference="$DATA" "$RES" 2>/dev/null || true
 }
+mb() { awk -v b="${1:-0}" 'BEGIN { printf "%.1f", b / 1048576 }'; }
 fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; else wget -qO "$2" "$1"; fi; }
+http_get() {
+    if command -v curl >/dev/null 2>&1; then curl -fsS --max-time 3 "$1" 2>/dev/null
+    else wget -qO- -T 3 -t 1 "$1" 2>/dev/null; fi
+}
+download() {  # URL TARGET NAME - reports "x de y MB" every 2 seconds
+    rm -f "$2"
+    total=""
+    if command -v curl >/dev/null 2>&1; then
+        total="$(curl -fsSIL "$1" 2>/dev/null | tr -d '\r' | sed -n 's/^[Cc]ontent-[Ll]ength: *//p' | tail -n1)"
+        curl -fsSL "$1" -o "$2" &
+    else
+        wget -qO "$2" "$1" &
+    fi
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        got="$(wc -c < "$2" 2>/dev/null || echo 0)"
+        if [ -n "$total" ]; then of=" de $(mb "$total") MB"; else of=" MB"; fi
+        progress download running "$3: $(mb "$got")$of"
+        sleep 2
+    done
+    wait "$pid"
+}
+fail() { progress "$STEP" failed "$1"; result false "Falha na atualização: $1 (veja data/update.log)"; }
 {
     echo "=== $(date) atualização $FROM -> $VERSION"
-    $SYSTEMCTL stop rts-worker.service rts-api.service
-    STAMP="$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$DATA/backups"
-    for f in rts.db rts.db-wal rts.db-shm; do
-        if [ -f "$DATA/$f" ]; then cp -p "$DATA/$f" "$DATA/backups/$(echo "$f" | sed "s/^rts/rts-$FROM-$STAMP/")"; fi
-    done
-    chown -R --reference="$DATA" "$DATA/backups" 2>/dev/null || true
-    TMP="$(mktemp)"
-    if fetch "https://github.com/$REPO/releases/download/$VERSION/install.sh" "$TMP" \
-        && sh "$TMP" --version "$VERSION" --dir "$DIR" --mode "$MODE" --repo "$REPO"; then
-        result true "Atualizado para $VERSION."
+    progress start done
+    PLAIN="${VERSION#v}"
+    BASE="https://github.com/$REPO/releases/download/$VERSION"
+    case "$(uname -m)" in
+        x86_64|amd64) ARCH=x64 ;;
+        aarch64|arm64) ARCH=arm64 ;;
+        *) ARCH="$(uname -m)" ;;
+    esac
+    if [ "$MODE" = python ]; then ASSET="rts-$PLAIN-py3-none-any.whl"; else ASSET="rts-$PLAIN-linux-$ARCH.tar.gz"; fi
+    WORK="$(mktemp -d)"
+    STOPPED=0
+    # 1. Download while the RTS keeps running: a failure here interrupts nothing.
+    progress download running install.sh
+    if ! fetch "$BASE/install.sh" "$WORK/install.sh"; then
+        fail "não foi possível baixar install.sh de $VERSION"
+    elif ! download "$BASE/$ASSET" "$WORK/$ASSET" "$ASSET"; then
+        fail "não foi possível baixar $ASSET"
     else
-        result false "Falha na atualização (veja data/update.log)."
-        $SYSTEMCTL start rts-api.service
-        sleep 3
-        $SYSTEMCTL start rts-worker.service
+        progress download done "$ASSET ($(mb "$(wc -c < "$WORK/$ASSET")") MB)"
+        # 2. Stop the RTS.
+        progress stop running
+        $SYSTEMCTL stop rts-worker.service rts-api.service
+        STOPPED=1
+        progress stop done
+        # 3. Back up the SQLite database.
+        progress backup running
+        STAMP="$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$DATA/backups"
+        COPIED=0
+        for f in rts.db rts.db-wal rts.db-shm; do
+            if [ -f "$DATA/$f" ]; then
+                cp -p "$DATA/$f" "$DATA/backups/$(echo "$f" | sed "s/^rts/rts-$FROM-$STAMP/")"
+                COPIED=$((COPIED + 1))
+            fi
+        done
+        chown -R --reference="$DATA" "$DATA/backups" 2>/dev/null || true
+        if [ $COPIED -gt 0 ]; then progress backup done "data/backups/rts-$FROM-$STAMP.db"
+        else progress backup done "sem banco SQLite local (nada a copiar)"; fi
+        # 4. Install (the installer reports its own progress through RTS_UPDATE_PROGRESS).
+        progress install running "modo $MODE"
+        if RTS_UPDATE_PROGRESS="$PROG" sh "$WORK/install.sh" --version "$VERSION" --dir "$DIR" \
+            --mode "$MODE" --repo "$REPO" --from "$WORK/$ASSET"; then
+            progress install done
+            # 5. Wait for the new API (the installer already started the services).
+            progress restart running "aguardando a API responder"
+            PORT="$(env_value RTS_PORT)"; [ -n "$PORT" ] || PORT=8000
+            i=0
+            until http_get "http://127.0.0.1:$PORT/api/v1/health" | grep -q "\"version\": *\"$PLAIN\""; do
+                i=$((i + 1))
+                [ $i -ge 90 ] && break
+                sleep 1
+            done
+            if [ $i -lt 90 ]; then
+                progress restart done "versão $PLAIN respondendo na porta $PORT"
+                result true "Atualizado para $VERSION."
+                STOPPED=0
+            else
+                fail "a nova versão foi instalada, mas a API não respondeu em 90 s na porta $PORT"
+            fi
+        else
+            fail "o instalador falhou"
+        fi
+        if [ $STOPPED = 1 ]; then
+            $SYSTEMCTL start rts-api.service
+            sleep 3
+            $SYSTEMCTL start rts-worker.service
+        fi
     fi
-    rm -f "$TMP"
+    rm -rf "$WORK"
 } >> "$DATA/update.log" 2>&1
 UPDATER
 chmod +x "$INSTALL_DIR/update.sh.tmp"
@@ -315,6 +417,8 @@ if [ $FRESH = 1 ]; then
 fi
 
 # ------------------------------------------------------------------ service
+report_progress install done
+report_progress restart running "iniciando os serviços"
 SERVICE_OK=0
 if [ -n "$SYSTEMCTL" ]; then
     if [ $IS_ROOT = 1 ]; then

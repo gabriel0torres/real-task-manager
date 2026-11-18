@@ -38,6 +38,8 @@ export const useMe = () =>
     },
     staleTime: 60_000,
     retry: false,
+    // Server unreachable (e.g. restarting during an update): keep trying until it is back.
+    refetchInterval: (query) => (query.state.status === "error" ? 3_000 : false),
   });
 
 /**

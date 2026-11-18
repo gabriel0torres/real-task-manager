@@ -2,6 +2,29 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
 
+export interface UpdateStep {
+  id: string;
+  label: string;
+  status: "pending" | "running" | "done" | "failed";
+  started_at: string | null;
+  finished_at: string | null;
+  detail: string | null;
+  /** Runs while the API is stopped (no news until it is back). */
+  api_offline: boolean;
+}
+
+export interface UpdateProgress {
+  version: string | null;
+  from_version: string | null;
+  started_at: string | null;
+  updated_at: string | null;
+  current_step: number;
+  total_steps: number;
+  failed: boolean;
+  completed: boolean;
+  steps: UpdateStep[];
+}
+
 export interface UpdateStatus {
   current_version: string;
   check_enabled: boolean;
@@ -16,10 +39,14 @@ export interface UpdateStatus {
   install_type: "docker" | "python" | "standalone" | "source";
   can_self_update: boolean;
   update_in_progress: boolean;
+  progress: UpdateProgress | null;
+  /** How long the previous successful update took (base of the estimate). */
+  last_duration_seconds: number | null;
   last_result: {
     ok: boolean | null;
     version: string | null;
     from_version: string | null;
+    requested_at?: string | null;
     finished_at: string | null;
     message: string | null;
   } | null;
@@ -28,13 +55,16 @@ export interface UpdateStatus {
 
 const KEY = ["system", "update"];
 
-export const useUpdateStatus = (enabled = true) =>
+export const useUpdateStatus = (enabled = true, live = false) =>
   useQuery({
     queryKey: KEY,
     queryFn: () => api.get<UpdateStatus>("/system/update"),
     enabled,
-    staleTime: 5 * 60_000,
-    refetchInterval: 60 * 60_000,
+    staleTime: live ? 0 : 5 * 60_000,
+    // Every 2 s while an update runs (also while the API is down, to notice its return).
+    refetchInterval: (query) => (live || query.state.data?.update_in_progress ? 2_000 : 60 * 60_000),
+    // No retries: a failure while updating means "server restarting", shown right away.
+    retry: false,
   });
 
 export const useCheckUpdates = () => {

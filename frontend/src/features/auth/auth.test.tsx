@@ -1,6 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { App } from "../../App";
 import { bodyOf, mockApi, renderWithProviders } from "../../test/utils";
@@ -30,6 +30,26 @@ const DASHBOARD = {
 const unauthorized = () => new Response(JSON.stringify({ detail: "Faça login para continuar." }), { status: 401 });
 
 describe("authentication gate", () => {
+  it("waits for an unreachable server (e.g. during an update) and recovers by itself", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let up = false;
+    mockApi({
+      "GET /auth/me": () => (up ? USER : new Response("", { status: 502 })),
+      "GET /dashboard": () => DASHBOARD,
+      "GET /tree": () => [],
+      "GET /system/worker": () => DASHBOARD.worker,
+    });
+    renderWithProviders(<App />);
+    expect(await screen.findByText("Servidor indisponível")).toBeInTheDocument();
+    expect(screen.getByText(/esta página volta sozinha quando ele responder/)).toBeInTheDocument();
+
+    up = true;
+    await vi.advanceTimersByTimeAsync(3_500);
+    await waitFor(() => expect(screen.queryByText("Servidor indisponível")).not.toBeInTheDocument());
+    expect(await screen.findByRole("heading", { name: "Painel" })).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
   it("shows the login form and enters the app after logging in", async () => {
     let logged = false;
     const api = mockApi({
