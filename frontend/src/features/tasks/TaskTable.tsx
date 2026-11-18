@@ -51,7 +51,9 @@ export function TaskTable({ tasks }: { tasks: Task[] }) {
                     task.schedule_source === "none" ? "text-amber-700" : "text-slate-400",
                   )}
                 >
-                  {SCHEDULE_SOURCE_LABELS[task.schedule_source]}
+                  {task.sequence_step
+                    ? `em sequência: etapa ${task.sequence_step} de ${task.sequence_total}`
+                    : SCHEDULE_SOURCE_LABELS[task.schedule_source]}
                 </span>
               </td>
               <td className="py-2 pr-3 text-slate-600" title={formatDateTime(task.next_run_at)}>

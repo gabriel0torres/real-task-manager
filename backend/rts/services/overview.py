@@ -109,6 +109,13 @@ def upcoming_runs(session: Session, default_tz: str, limit: int = 10) -> list[di
         schedule = t.effective_schedule
         if not schedule or not t.is_effectively_active:
             continue
+        name = t.name
+        if t.runs_in_sequence:
+            # One entry per sequence: its first task, which starts at that time.
+            steps = t.subcategory.sequence_tasks()
+            if not steps or steps[0].id != t.id:
+                continue
+            name = f"{t.name} (sequência de {len(steps)} tarefas)"
         try:
             fires = next_fire_times(list(schedule.expressions), schedule.tz(default_tz), 3)
         except CronError:
@@ -116,7 +123,7 @@ def upcoming_runs(session: Session, default_tz: str, limit: int = 10) -> list[di
         items.extend(
             {
                 "task_id": t.id,
-                "task_name": t.name,
+                "task_name": name,
                 "subcategory_name": t.subcategory.name,
                 "group_name": t.subcategory.group.name,
                 "at": at,

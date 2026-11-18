@@ -40,6 +40,21 @@ class ScheduleMode(StrEnum):
     MANUAL = "manual"  # never fires on a schedule
 
 
+class ExecutionMode(StrEnum):
+    """How the tasks of a subcategory that inherit its schedule run when it fires."""
+
+    PARALLEL = "parallel"  # each one on its own, at the same time
+    SEQUENTIAL = "sequential"  # one after the other, in the configured order
+
+
+class SequenceStatus(StrEnum):
+    RUNNING = "running"
+    SUCCESS = "success"  # every step succeeded
+    FAILED = "failed"  # stopped on a failure, or finished with failed steps
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"  # the previous sequence was still running (or nothing to run)
+
+
 class Shell(StrEnum):
     BASH = "bash"
     SH = "sh"

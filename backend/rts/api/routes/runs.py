@@ -45,6 +45,9 @@ def run_to_out(run: Run) -> RunOut:
         status_reason=run.status_reason,
         cancel_requested=run.cancel_requested,
         triggered_by=run.triggered_by,
+        sequence_run_id=run.sequence_run_id,
+        sequence_index=run.sequence_index,
+        sequence_total=len(run.sequence_run.task_ids) if run.sequence_run else None,
     )
 
 

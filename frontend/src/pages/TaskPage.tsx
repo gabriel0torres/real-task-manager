@@ -196,6 +196,15 @@ export function TaskPage() {
               <Info label="Quando">{task.schedule_description}</Info>
               <Info label="Origem">
                 <ScheduleOrigin task={task} sub={sub} group={group} />
+                {task.sequence_step && sub && (
+                  <span className="block text-xs text-slate-500">
+                    Em sequência:{" "}
+                    <Link to={`/subcategories/${sub.id}`} className="text-indigo-600 hover:underline">
+                      etapa {task.sequence_step} de {task.sequence_total}
+                    </Link>{" "}
+                    (começa quando a anterior termina)
+                  </span>
+                )}
               </Info>
               <Info label="Próxima execução">
                 {task.next_run_at ? (

@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from rts.models.enums import MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
+from rts.models.enums import ExecutionMode, MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
 from rts.models.hierarchy import ScheduleSource
 from rts.scheduling.cron import MAX_EXPRESSIONS, CronError, get_timezone, normalize_expression
 from rts.schemas.common import DescriptionStr, NameStr, ORMModel
@@ -100,6 +100,14 @@ class SubcategoryCreate(_ScheduleFields):
         description="Agendamento herdado pelas tarefas (vazio = usa o do grupo).",
     )
     timezone: str | None = None
+    execution_mode: ExecutionMode = Field(
+        default=ExecutionMode.PARALLEL,
+        description="parallel: as tarefas que herdam o agendamento rodam juntas; "
+        "sequential: uma depois da outra, na ordem definida.",
+    )
+    stop_on_failure: bool = Field(
+        default=False, description="Modo sequencial: parar na primeira tarefa sem sucesso."
+    )
 
 
 class SubcategoryUpdate(_ScheduleFields):
@@ -109,6 +117,8 @@ class SubcategoryUpdate(_ScheduleFields):
     is_active: bool | None = None
     cron_expressions: list[str] | None = None
     timezone: str | None = None
+    execution_mode: ExecutionMode | None = None
+    stop_on_failure: bool | None = None
 
 
 class InheritedScheduleOut(BaseModel):
@@ -128,6 +138,11 @@ class SubcategoryOut(ScheduleOwnerOut):
     is_active: bool
     is_effectively_active: bool
     inherited_schedule: InheritedScheduleOut
+    execution_mode: ExecutionMode
+    stop_on_failure: bool
+    running_sequence_id: int | None = Field(
+        default=None, description="Sequência em andamento (modo sequencial)."
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -214,6 +229,14 @@ class TaskOut(ORMModel):
     )
     effective_cron_expressions: list[str]
     schedule_description: str = Field(description="Descrição do agendamento efetivo.")
+    sequence_position: int | None = Field(
+        default=None, description="Ordem configurada na subcategoria sequencial."
+    )
+    sequence_step: int | None = Field(
+        default=None,
+        description="Posição (1..) na sequência da subcategoria; null se não roda em sequência.",
+    )
+    sequence_total: int | None = None
     effective_timezone: str
     timeout_seconds: int | None
     max_retries: int

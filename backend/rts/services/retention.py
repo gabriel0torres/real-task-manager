@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from rts.models import Run, Task
+from rts.models import Run, SequenceRun, SequenceStatus, Task
 from rts.models.enums import FINAL_RUN_STATUSES
 from rts.services.settings import get_setting
 
@@ -68,6 +68,15 @@ def apply_retention(
             )
             deleted += _delete_ids(session, ids)
 
+    session.commit()
+    # Finished sequences whose runs are all gone (a day of grace for skipped ones).
+    session.execute(
+        delete(SequenceRun).where(
+            SequenceRun.status != SequenceStatus.RUNNING,
+            SequenceRun.created_at < now - timedelta(days=1),
+            ~select(Run.id).where(Run.sequence_run_id == SequenceRun.id).exists(),
+        )
+    )
     session.commit()
     if deleted:
         log.info("Retenção de logs: %d execução(ões) antiga(s) removida(s).", deleted)

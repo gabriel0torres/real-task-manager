@@ -53,8 +53,8 @@ class _Writer:
         self.box = box
         self.cipher = cipher
         self.secrets_total = 0
-        # Version 2 is only needed for inherited schedules (see rts.transfer.format).
-        self.needs_v2 = False
+        # Lowest schema version the content needs (see rts.transfer.format).
+        self.version = 1
 
     def variables(self, scope: VariableScope, owner_id: int | None) -> list[dict]:
         stmt = select(Variable).where(Variable.scope == scope)
@@ -84,7 +84,7 @@ class _Writer:
 
     def schedule(self, task: Task) -> dict:
         if task.schedule_mode is ScheduleMode.INHERIT:
-            self.needs_v2 = True
+            self.version = max(self.version, 2)
             effective = task.effective_schedule
             if effective:
                 description = f"herdado {INHERITED_FROM[effective.source]}: " + (
@@ -119,6 +119,9 @@ class _Writer:
             "misfire_policy": task.misfire_policy.value,
             "variables": self.variables(VariableScope.TASK, task.id),
         }
+        if task.sequence_position is not None:
+            self.version = max(self.version, 3)
+            data["sequence_position"] = task.sequence_position
         return data
 
     def subcategory(self, sub: Subcategory, standalone: bool = False) -> dict:
@@ -139,7 +142,13 @@ class _Writer:
                 group.cron_expressions, group.timezone, f" (do grupo {group.name})"
             )
         if "schedule" in data:
-            self.needs_v2 = True
+            self.version = max(self.version, 2)
+        if sub.is_sequential or sub.stop_on_failure:
+            self.version = max(self.version, 3)
+            data["execution"] = {
+                "mode": sub.execution_mode.value,
+                "stop_on_failure": sub.stop_on_failure,
+            }
         data["tasks"] = [self.task(t) for t in tasks]
         return data
 
@@ -152,7 +161,7 @@ class _Writer:
             "variables": [] if only else self.variables(VariableScope.GROUP, group.id),
         }
         if not only and group.cron_expressions:
-            self.needs_v2 = True
+            self.version = max(self.version, 2)
             data["schedule"] = _owner_schedule(group.cron_expressions, group.timezone)
         data["subcategories"] = [self.subcategory(s, standalone=only is not None) for s in subs]
         return data
@@ -211,8 +220,8 @@ def export_config(
         doc["groups"] = [writer.group(sub.group, only=sub)]
         label = f"{sub.group.name}-{sub.name}"
 
-    if writer.needs_v2:
-        doc["schema_version"] = SCHEMA_VERSION
+    doc["schema_version"] = writer.version
+    assert writer.version <= SCHEMA_VERSION
 
     secrets_note = {
         "omit": "segredos exportados SEM valor (a preencher na importação)",

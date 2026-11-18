@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, status
+from pydantic import BaseModel, Field
 
 from rts.api.deps import SessionDep, SettingsDep
 from rts.schemas.common import ErrorOut
@@ -45,6 +46,25 @@ def get_subcategory(subcategory_id: int, session: SessionDep):
 )
 def get_inherited_variables(subcategory_id: int, session: SessionDep):
     return inherited_variables(session, svc.get_subcategory(session, subcategory_id))
+
+
+class SequenceOrderIn(BaseModel):
+    task_ids: list[int] = Field(description="Tarefas na ordem desejada (1ª, 2ª, ...).")
+
+
+class SequenceOrderOut(BaseModel):
+    task_ids: list[int] = Field(description="Ordem resultante da sequência (tarefas que herdam).")
+
+
+@router.put(
+    "/{subcategory_id}/sequence-order",
+    response_model=SequenceOrderOut,
+    summary="Definir a ordem das tarefas (modo sequencial)",
+)
+def set_sequence_order(subcategory_id: int, data: SequenceOrderIn, session: SessionDep):
+    order = svc.set_sequence_order(session, subcategory_id, data.task_ids)
+    session.commit()
+    return SequenceOrderOut(task_ids=order)
 
 
 @router.patch(

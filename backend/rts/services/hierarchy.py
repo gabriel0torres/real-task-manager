@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, object_session, selectinload
 
 from rts.models import EffectiveSchedule, Group, ScheduleMode, Subcategory, Task
 from rts.scheduling.cron import CronError, next_fire_times
@@ -265,7 +265,11 @@ def group_to_out(group: Group) -> GroupOut:
 
 
 def subcategory_to_out(sub: Subcategory) -> SubcategoryOut:
+    from rts.services.sequences import running_sequence  # avoids an import cycle
+
     inherited = sub.inherited_schedule
+    session = object_session(sub)
+    running = running_sequence(session, sub.id) if session is not None else None
     return SubcategoryOut.model_validate(
         {
             **{c: getattr(sub, c) for c in SubcategoryOut.model_fields if hasattr(sub, c)},
@@ -276,12 +280,18 @@ def subcategory_to_out(sub: Subcategory) -> SubcategoryOut:
                 timezone=inherited.timezone,
                 description=_safe_describe(inherited.expressions),
             ),
+            "running_sequence_id": running.id if running else None,
         }
     )
 
 
 def task_to_out(task: Task, default_timezone: str) -> TaskOut:
     schedule = task.effective_schedule
+    step = total = None
+    if task.runs_in_sequence:
+        steps = [t.id for t in task.subcategory.sequence_tasks()]
+        total = len(steps)
+        step = steps.index(task.id) + 1 if task.id in steps else None
     return TaskOut.model_validate(
         {
             **{c: getattr(task, c) for c in TaskOut.model_fields if hasattr(task, c)},
@@ -292,5 +302,24 @@ def task_to_out(task: Task, default_timezone: str) -> TaskOut:
             "effective_timezone": schedule.tz(default_timezone),
             "is_effectively_active": task.is_effectively_active,
             "next_run_at": task_next_run(task, default_timezone),
+            "sequence_step": step,
+            "sequence_total": total,
         }
     )
+
+
+def set_sequence_order(session: Session, subcategory_id: int, task_ids: list[int]) -> list[int]:
+    """Number the given tasks 1..n; the subcategory's other tasks go after them."""
+    sub = get_subcategory(session, subcategory_id)
+    tasks = {t.id: t for t in sub.tasks}
+    unknown = [i for i in task_ids if i not in tasks]
+    if unknown:
+        raise InvalidInputError(f"Tarefas que não pertencem a esta subcategoria: {unknown}")
+    if len(set(task_ids)) != len(task_ids):
+        raise InvalidInputError("Uma tarefa aparece mais de uma vez na ordem.")
+    for task in tasks.values():
+        task.sequence_position = None
+    for position, task_id in enumerate(task_ids, start=1):
+        tasks[task_id].sequence_position = position
+    session.flush()
+    return [t.id for t in sub.sequence_tasks()]

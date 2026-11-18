@@ -19,6 +19,7 @@ from rts.api.routes import (
     notifications,
     overview,
     runs,
+    sequences,
     subcategories,
     system,
     tasks,
@@ -66,6 +67,7 @@ def _routers():
         (variables.router, [config]),
         (transfer.router, [config]),
         (runs.router, [Depends(require_by_method(Permission.RUN_TASKS))]),
+        (sequences.router, [Depends(require_by_method(Permission.RUN_TASKS))]),
         (system.settings_router, [settings]),
         (notifications.router, [settings]),
     ]

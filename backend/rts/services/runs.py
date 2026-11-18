@@ -51,6 +51,8 @@ def create_run(
     triggered_by: str | None = None,
     attempt: int = 1,
     root_run_id: int | None = None,
+    sequence_run_id: int | None = None,
+    sequence_index: int | None = None,
 ) -> Run:
     run = Run(
         task_id=task_id,
@@ -60,6 +62,8 @@ def create_run(
         triggered_by=triggered_by,
         attempt=attempt,
         root_run_id=root_run_id,
+        sequence_run_id=sequence_run_id,
+        sequence_index=sequence_index,
     )
     session.add(run)
     session.flush()

@@ -108,6 +108,11 @@ export function RunDetailPage() {
                 </>
               )}
             </Info>
+            {run.sequence_run_id && (
+              <Info label="Sequência">
+                Etapa {(run.sequence_index ?? 0) + 1} de {run.sequence_total} da sequência #{run.sequence_run_id}
+              </Info>
+            )}
             <Info label="Agendada para">{formatDateTime(run.scheduled_for)}</Info>
             <Info label="Criada em">{formatDateTime(run.created_at)}</Info>
             <Info label="Início">{formatDateTime(run.started_at)}</Info>

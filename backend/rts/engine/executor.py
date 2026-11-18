@@ -348,6 +348,9 @@ class RunExecutor:
                     scheduled_for=due,
                     attempt=run.attempt + 1,
                     root_run_id=run.root_run_id or run.id,
+                    # A retry stays in its sequence step: the sequence waits for it.
+                    sequence_run_id=run.sequence_run_id,
+                    sequence_index=run.sequence_index,
                 )
                 append_system_log(
                     session,

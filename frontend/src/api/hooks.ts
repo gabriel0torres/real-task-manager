@@ -11,6 +11,7 @@ import type {
   RunStatus,
   SchedulePreview,
   ScheduleOwner,
+  SequenceRun,
   Subcategory,
   SystemInfo,
   Task,
@@ -71,6 +72,15 @@ export const useGroupTasks = (groupId: number) =>
     queryKey: ["tasks", { groupId }],
     queryFn: () => api.get<Task[]>(`/tasks${query({ group_id: groupId })}`),
     enabled: groupId > 0,
+  });
+
+/** Sequence runs of a subcategory; refreshed every 3 s while one is running. */
+export const useSequences = (subcategoryId: number, enabled = true) =>
+  useQuery({
+    queryKey: ["sequences", subcategoryId],
+    queryFn: () => api.get<SequenceRun[]>(`/subcategories/${subcategoryId}/sequences?limit=10`),
+    enabled: enabled && subcategoryId > 0,
+    refetchInterval: (q) => (q.state.data?.some((s) => s.status === "running") ? 3_000 : 30_000),
   });
 
 export const useTask = (id: number) =>
@@ -170,6 +180,7 @@ function useApiMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>) {
 export type GroupInput = Pick<Group, "name" | "description" | "is_active">;
 export type SubcategoryInput = Pick<Subcategory, "group_id" | "name" | "description" | "is_active">;
 export type ScheduleInput = Pick<ScheduleOwner, "cron_expressions" | "timezone">;
+export type ExecutionInput = Pick<Subcategory, "execution_mode" | "stop_on_failure">;
 export interface VariableInput {
   scope: VariableScope;
   owner_id: number | null;
@@ -190,9 +201,20 @@ export const useDeleteGroup = () => useApiMutation((id: number) => api.del(`/gro
 export const useCreateSubcategory = () =>
   useApiMutation((data: SubcategoryInput) => api.post<Subcategory>("/subcategories", data));
 export const useUpdateSubcategory = () =>
-  useApiMutation(({ id, ...data }: Partial<SubcategoryInput & ScheduleInput> & { id: number }) =>
+  useApiMutation(
+    ({ id, ...data }: Partial<SubcategoryInput & ScheduleInput & ExecutionInput> & { id: number }) =>
     api.patch<Subcategory>(`/subcategories/${id}`, data),
   );
+export const useSetSequenceOrder = () =>
+  useApiMutation(({ id, taskIds }: { id: number; taskIds: number[] }) =>
+    api.put<{ task_ids: number[] }>(`/subcategories/${id}/sequence-order`, { task_ids: taskIds }),
+  );
+export const useRunSequence = () =>
+  useApiMutation((subcategoryId: number) =>
+    api.post<SequenceRun>(`/subcategories/${subcategoryId}/sequences`),
+  );
+export const useCancelSequence = () =>
+  useApiMutation((sequenceId: number) => api.post<SequenceRun>(`/sequences/${sequenceId}/cancel`));
 export const useDeleteSubcategory = () =>
   useApiMutation((id: number) => api.del(`/subcategories/${id}`));
 

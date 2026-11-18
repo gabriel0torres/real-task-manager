@@ -380,9 +380,39 @@ tarefa escolhe a **origem do agendamento**:
   agendamento próprio (e não mudam). A lista de tarefas mostra a origem de cada uma.
 - Cada tarefa continua sendo disparada sozinha: sobreposição, timeout, novas tentativas e
   execuções perdidas funcionam por tarefa, como antes. Tarefas que herdam o mesmo horário começam
-  juntas, em paralelo.
+  juntas, em paralelo, a menos que a subcategoria seja **sequencial** (veja abaixo).
 - Pela API, `schedule_mode` (`own`, `inherit`, `manual`) indica a origem; sem ele, uma tarefa com
   expressões cron é `own` e sem expressões é `manual`, como nas versões anteriores.
+
+#### Execução sequencial (subcategoria)
+
+No card **Execução das tarefas** da subcategoria, escolha **Paralela** (padrão) ou
+**Sequencial**. Isso substitui um pipeline do Jenkins com vários `stage` em sequência.
+
+- **Quem entra na sequência:** as tarefas ativas da subcategoria com a origem **Herdar**. Elas
+  seguem a ordem definida no card, que tem botões para subir e descer.
+- **Como roda:** quando o agendamento padrão dispara, roda a 1ª tarefa. Quando ela termina, roda a
+  2ª, e assim por diante. Novas tentativas contam como parte da etapa: a sequência espera a última
+  tentativa antes de seguir.
+- **Se uma tarefa falhar:** a sequência **continua com a próxima** (padrão, como `|| exit 0`) ou
+  **para**, conforme a opção escolhida no card.
+- **Disparo com a anterior rodando:** se a sequência anterior ainda estiver em andamento, a nova é
+  **pulada** e registrada como pulada no histórico.
+- **Fora da sequência:** tarefas com agendamento próprio, somente manual ou pausadas continuam
+  independentes.
+- **No card:** o botão **Executar sequência agora**, a sequência em andamento com a etapa atual
+  (e o botão **Cancelar sequência**) e o histórico das últimas sequências, com o resultado de cada
+  etapa.
+- **Cada etapa é uma execução normal,** com log, timeout e notificações. O log e a tela da
+  execução mostram "Etapa 2 de 20 da sequência #N".
+- **Disparos perdidos:** a sequência não repete disparos perdidos enquanto o servidor estava fora
+  do ar. Se o servidor reiniciar no meio de uma sequência, a etapa interrompida conta como falha e
+  a sequência segue a regra acima.
+- **Pela API:**
+  - `POST /api/v1/subcategories/{id}/sequences` executa a sequência;
+  - `GET` no mesmo caminho lista o histórico;
+  - `POST /api/v1/sequences/{id}/cancel` cancela;
+  - `PUT /api/v1/subcategories/{id}/sequence-order` define a ordem.
 
 ### Execução
 

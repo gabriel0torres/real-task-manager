@@ -16,6 +16,7 @@ import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
 import { DefaultScheduleCard } from "../features/schedule/DefaultScheduleCard";
+import { ExecutionCard } from "../features/sequences/ExecutionCard";
 import { TaskTable } from "../features/tasks/TaskTable";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
@@ -185,6 +186,8 @@ export function SubcategoryPage() {
             }
           />
         )}
+
+        {tasks && <ExecutionCard sub={sub} tasks={tasks} />}
 
         <Card
           title="Tarefas"

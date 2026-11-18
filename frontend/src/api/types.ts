@@ -19,6 +19,10 @@ export type TaskScheduleMode = "own" | "inherit" | "manual";
 /** Where the effective schedule actually comes from ("none": inherits, but nothing above). */
 export type ScheduleSource = "task" | "subcategory" | "group" | "manual" | "none";
 
+/** How a subcategory's tasks that inherit its schedule run when it fires. */
+export type ExecutionMode = "parallel" | "sequential";
+export type SequenceStatus = "running" | "success" | "failed" | "cancelled" | "skipped";
+
 /** Default schedule of a group or subcategory, inherited by tasks (empty = none). */
 export interface ScheduleOwner {
   cron_expressions: string[];
@@ -51,6 +55,10 @@ export interface Subcategory extends ScheduleOwner {
   is_effectively_active: boolean;
   /** What tasks set to "inherit" follow: this subcategory's schedule, else the group's. */
   inherited_schedule: InheritedSchedule;
+  execution_mode: ExecutionMode;
+  /** Sequential mode: stop at the first step that doesn't succeed. */
+  stop_on_failure: boolean;
+  running_sequence_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +80,10 @@ export interface Task {
   effective_cron_expressions: string[];
   /** Description of the effective schedule. */
   schedule_description: string;
+  sequence_position: number | null;
+  /** Position (1..) in the subcategory's sequence; null when not run in sequence. */
+  sequence_step: number | null;
+  sequence_total: number | null;
   effective_timezone: string;
   timeout_seconds: number | null;
   max_retries: number;
@@ -89,6 +101,9 @@ export type TaskInput = Omit<
   Task,
   | "id"
   | "group_id"
+  | "sequence_position"
+  | "sequence_step"
+  | "sequence_total"
   | "schedule_source"
   | "effective_cron_expressions"
   | "schedule_description"
@@ -145,6 +160,39 @@ export interface Run {
   status_reason: string | null;
   cancel_requested: boolean;
   triggered_by: string | null;
+  sequence_run_id?: number | null;
+  sequence_index?: number | null;
+  sequence_total?: number | null;
+}
+
+export interface SequenceStep {
+  index: number;
+  task_id: number;
+  task_name: string;
+  run_id: number | null;
+  /** Status of the latest attempt, or "not_run". */
+  status: RunStatus | "not_run";
+  attempt: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface SequenceRun {
+  id: number;
+  subcategory_id: number;
+  status: SequenceStatus;
+  trigger: RunTrigger;
+  triggered_by: string | null;
+  stop_on_failure: boolean;
+  scheduled_for: string | null;
+  created_at: string;
+  finished_at: string | null;
+  status_reason: string | null;
+  current_index: number;
+  total_steps: number;
+  completed_steps: number;
+  steps: SequenceStep[];
 }
 
 export interface RunPage {

@@ -1,9 +1,9 @@
-"""The export file format (schema_version 1 and 2).
+"""The export file format (schema_version 1 to 3).
 
 Layout::
 
-    schema_version: 2
-    rts_version: 0.3.0
+    schema_version: 3
+    rts_version: 0.4.0
     exported_at: 2026-11-17T12:00:00Z
     scope: system | group | subcategory
     secrets_mode: omit | encrypted
@@ -16,17 +16,24 @@ Layout::
         subcategories:
           - name, description, active, variables
             schedule: {cron: [...], timezone, description}   # v2, optional
+            execution: {mode, stop_on_failure}               # v3, optional
             tasks:
               - name, description, command, shell, working_dir, active,
                 schedule: {mode, cron: [...], timezone, description}
+                sequence_position                            # v3, optional
                 timeout_seconds, retries: {max, interval_seconds},
                 overlap_policy, misfire_policy, variables
 
 Version 2 adds inherited schedules: an optional ``schedule`` on groups and
 subcategories, and ``mode`` (own | inherit | manual) on task schedules. Without
 ``mode`` a task schedule means what it did in version 1: ``own`` when it has cron
-expressions, ``manual`` otherwise. Exports only use version 2 when they need it,
-so files without inherited schedules still import into older installations.
+expressions, ``manual`` otherwise.
+
+Version 3 adds sequential subcategories: ``execution`` (mode ``parallel`` or
+``sequential``, ``stop_on_failure``) and each task's ``sequence_position``.
+
+Exports use the lowest version their content needs, so files without these
+features still import into older installations.
 
 Variable: {key, value | value_encrypted, secret, description}. A secret exported
 without value has ``value: null`` ("a preencher").
@@ -43,12 +50,12 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from rts.models.enums import MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
+from rts.models.enums import ExecutionMode, MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
 from rts.schemas.common import NameStr
 from rts.schemas.hierarchy import MAX_TIMEOUT_SECONDS, _normalize_crons, _validate_tz
 from rts.schemas.variables import MAX_VALUE_LENGTH, validate_key
 
-SCHEMA_VERSION = 2  # newest version this installation reads and writes
+SCHEMA_VERSION = 3  # newest version this installation reads and writes
 MAX_FILE_BYTES = 5_000_000
 
 Scope = Literal["system", "group", "subcategory"]
@@ -115,6 +122,11 @@ class TaskScheduleDoc(ScheduleDoc):
         return ScheduleMode.OWN if self.cron else ScheduleMode.MANUAL
 
 
+class ExecutionDoc(_Strict):
+    mode: ExecutionMode = ExecutionMode.PARALLEL
+    stop_on_failure: bool = False
+
+
 class RetriesDoc(_Strict):
     max: int = Field(default=0, ge=0, le=100)
     interval_seconds: int = Field(default=60, ge=0, le=86_400)
@@ -153,6 +165,7 @@ class TaskDoc(_WithVariables):
     retries: RetriesDoc = Field(default_factory=RetriesDoc)
     overlap_policy: OverlapPolicy = OverlapPolicy.SKIP
     misfire_policy: MisfirePolicy = MisfirePolicy.IGNORE
+    sequence_position: int | None = Field(default=None, ge=1)
 
     @field_validator("command")
     @classmethod
@@ -167,6 +180,7 @@ class SubcategoryDoc(_WithVariables):
     description: str = ""
     active: bool = True
     schedule: ScheduleDoc | None = None
+    execution: ExecutionDoc | None = None
     tasks: list[TaskDoc] = Field(default_factory=list)
 
     @model_validator(mode="after")

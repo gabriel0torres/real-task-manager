@@ -8,6 +8,8 @@ Design
 * APScheduler computes *when* tasks fire. A custom executor receives the exact
   scheduled time of each fire and turns it into a ``pending`` run.
 * ``dispatch()`` applies the overlap policy and starts runs in executor threads.
+* Sequential subcategories get one job for the whole sequence; ``tick()`` advances
+  running sequences (see :mod:`rts.services.sequences`).
 * On start, runs left ``running`` by a crash are failed ("interrompida por
   reinício") and the missed-run policy is applied for the downtime window.
 """
@@ -44,6 +46,7 @@ from rts.models import (
 from rts.scheduling.cron import CronError, build_trigger, fire_times_between
 from rts.services.retention import apply_retention
 from rts.services.runs import append_system_log, create_run, finish_without_running
+from rts.services.sequences import advance_sequences, start_sequence
 from rts.services.settings import CONFIG_REVISION, get_default_timezone, get_setting
 
 log = logging.getLogger(__name__)
@@ -56,7 +59,7 @@ RETENTION_INTERVAL_SECONDS = 3600
 
 
 class _FireExecutor(BaseExecutor):
-    """APScheduler executor that forwards (task_id, scheduled_time) synchronously."""
+    """APScheduler executor that forwards (job key, scheduled_time) synchronously."""
 
     def __init__(self, on_fire) -> None:
         super().__init__()
@@ -74,8 +77,12 @@ class _FireExecutor(BaseExecutor):
             self._run_job_success(job.id, [])
 
 
-def _job_id(task_id: int) -> str:
-    return f"task-{task_id}"
+SEQUENCE_PREFIX = "seq-"
+
+
+def _job_id(key: int | str) -> str:
+    """Task jobs are keyed by task id; sequence jobs by "seq-<subcategory id>"."""
+    return key if isinstance(key, str) else f"task-{key}"
 
 
 def _never_called(task_id: int) -> None:  # pragma: no cover
@@ -117,10 +124,10 @@ class SchedulerEngine:
 
         self._scheduler = BackgroundScheduler(
             timezone=UTC,
-            executors={"default": _FireExecutor(self.on_fire)},
+            executors={"default": _FireExecutor(self._on_job_fire)},
             job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": None},
         )
-        self._job_signatures: dict[int, tuple] = {}
+        self._job_signatures: dict[int | str, tuple] = {}
         self._config_revision: int | None = None
         self._executors: dict[int, tuple[RunExecutor, threading.Thread]] = {}
         self._executors_lock = threading.Lock()
@@ -178,6 +185,9 @@ class SchedulerEngine:
         if now - self._last_heartbeat >= self.heartbeat_interval:
             self._heartbeat()
         self.reload_jobs()
+        with self.ctx.session_factory() as session:
+            if advance_sequences(session, self.ctx.clock()):
+                session.commit()
         self.dispatch()
         if now - self._last_retention >= RETENTION_INTERVAL_SECONDS:
             self._last_retention = now
@@ -235,8 +245,8 @@ class SchedulerEngine:
         default_tz = get_default_timezone(session, self.ctx.settings.default_timezone)
         for task in self._load_tasks(session):
             schedule = task.effective_schedule
-            if not task.is_effectively_active or not schedule:
-                continue
+            if not task.is_effectively_active or not schedule or task.runs_in_sequence:
+                continue  # sequences don't replay missed fires
             # Tasks created while the engine was down only miss fires after creation.
             since = max(downtime_start, task.last_fire_at or downtime_start, task.created_at)
             try:
@@ -279,35 +289,47 @@ class SchedulerEngine:
             if not force and revision == self._config_revision:
                 return False
             default_tz = get_default_timezone(session, self.ctx.settings.default_timezone)
-            desired: dict[int, tuple] = {}
+            desired: dict[int | str, tuple] = {}
+            sequences: dict[int, Subcategory] = {}
             for task in self._load_tasks(session):
                 # The effective schedule may be inherited from the subcategory or group.
                 schedule = task.effective_schedule
-                if task.is_effectively_active and schedule:
+                if not (task.is_effectively_active and schedule):
+                    continue
+                if task.runs_in_sequence:
+                    sequences[task.subcategory_id] = task.subcategory
+                else:
                     desired[task.id] = (schedule.expressions, schedule.tz(default_tz))
+            # One job per sequential subcategory, on the schedule its tasks inherit.
+            for sub_id, sub in sequences.items():
+                schedule = sub.inherited_schedule
+                desired[f"{SEQUENCE_PREFIX}{sub_id}"] = (
+                    schedule.expressions,
+                    schedule.tz(default_tz),
+                )
 
-        for task_id in set(self._job_signatures) - set(desired):
-            if self._scheduler.get_job(_job_id(task_id)):
-                self._scheduler.remove_job(_job_id(task_id))
-            del self._job_signatures[task_id]
+        for key in set(self._job_signatures) - set(desired):
+            if self._scheduler.get_job(_job_id(key)):
+                self._scheduler.remove_job(_job_id(key))
+            del self._job_signatures[key]
 
-        for task_id, signature in desired.items():
-            if self._job_signatures.get(task_id) == signature:
+        for key, signature in desired.items():
+            if self._job_signatures.get(key) == signature:
                 continue
             crons, tz = signature
             try:
                 trigger = build_trigger(list(crons), tz)
             except CronError as exc:
-                log.error("Tarefa %s com agendamento inválido: %s", task_id, exc)
+                log.error("Agendamento inválido (%s): %s", _job_id(key), exc)
                 continue
             self._scheduler.add_job(
                 _never_called,
                 trigger=trigger,
-                args=[task_id],
-                id=_job_id(task_id),
+                args=[key],
+                id=_job_id(key),
                 replace_existing=True,
             )
-            self._job_signatures[task_id] = signature
+            self._job_signatures[key] = signature
 
         self._config_revision = revision
         log.debug("Agendamentos recarregados (revisão %s, %d tarefas).", revision, len(desired))
@@ -318,7 +340,43 @@ class SchedulerEngine:
         return {
             int(job.id.removeprefix("task-")): getattr(job, "next_run_time", None)
             for job in self._scheduler.get_jobs()
+            if job.id.startswith("task-")
         }
+
+    def _on_job_fire(self, key: int | str, scheduled_time: datetime) -> None:
+        if isinstance(key, str) and key.startswith(SEQUENCE_PREFIX):
+            self.on_sequence_fire(int(key.removeprefix(SEQUENCE_PREFIX)), scheduled_time)
+        else:
+            self.on_fire(int(key), scheduled_time)
+
+    def on_sequence_fire(self, subcategory_id: int, scheduled_time: datetime):
+        """The schedule of a sequential subcategory fired: start its sequence."""
+        now = self.ctx.clock()
+        with self.ctx.session_factory() as session:
+            sub = session.get(Subcategory, subcategory_id)
+            if sub is None or not sub.is_sequential or not sub.is_effectively_active:
+                return None
+            last = sub.last_sequence_fire_at
+            if last is not None and scheduled_time <= last:
+                return None  # already handled
+            sub.last_sequence_fire_at = scheduled_time
+            late = (now - scheduled_time).total_seconds()
+            if late > self.ctx.settings.misfire_grace_seconds:
+                log.warning(
+                    "Sequência da subcategoria %s: disparo de %s atrasado %.0fs, ignorado.",
+                    subcategory_id,
+                    scheduled_time,
+                    late,
+                )
+                session.commit()
+                return None
+            seq = start_sequence(
+                session, sub, RunTrigger.SCHEDULED, scheduled_for=scheduled_time, now=now
+            )
+            session.commit()
+            log.info("Sequência #%s (subcategoria %s): %s.", seq.id, sub.id, seq.status.value)
+        self.wake()
+        return seq
 
     def on_fire(self, task_id: int, scheduled_time: datetime) -> Run | None:
         """A schedule fired: record it and create a pending run (respecting misfires)."""
@@ -327,6 +385,8 @@ class SchedulerEngine:
             task = session.get(Task, task_id)
             if task is None or not task.is_effectively_active or not task.effective_schedule:
                 return None
+            if task.runs_in_sequence:
+                return None  # started by its subcategory's sequence
             if task.last_fire_at is not None and scheduled_time <= task.last_fire_at:
                 return None  # already handled (e.g. by recovery)
             task.last_fire_at = scheduled_time

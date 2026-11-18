@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from rts.db import Base
 from rts.models.base import TimestampMixin, UTCDateTime, str_enum
-from rts.models.enums import MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
+from rts.models.enums import ExecutionMode, MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
 
 if TYPE_CHECKING:
     from rts.models.run import Run
@@ -39,6 +39,11 @@ class EffectiveSchedule:
 
     def tz(self, default: str) -> str:
         return self.timezone or default
+
+
+def _sequence_key(task: Task) -> tuple:
+    position = task.sequence_position
+    return (position is None, position or 0, task.name.lower())
 
 
 class _ScheduleOwner:
@@ -81,6 +86,17 @@ class Subcategory(_ScheduleOwner, TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
+    # Tasks that inherit the schedule: all at once, or one after the other.
+    execution_mode: Mapped[ExecutionMode] = mapped_column(
+        str_enum(ExecutionMode, "subcategory_execution_mode"),
+        default=ExecutionMode.PARALLEL,
+        nullable=False,
+    )
+    # Sequential mode: stop at the first step that doesn't succeed (default: go on).
+    stop_on_failure: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Last scheduled fire of the sequence handled by the engine (avoids duplicates).
+    last_sequence_fire_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
     group: Mapped[Group] = relationship(back_populates="subcategories")
     tasks: Mapped[list[Task]] = relationship(
         back_populates="subcategory",
@@ -99,6 +115,15 @@ class Subcategory(_ScheduleOwner, TimestampMixin, Base):
     @property
     def is_effectively_active(self) -> bool:
         return bool(self.is_active and self.group.is_active)
+
+    @property
+    def is_sequential(self) -> bool:
+        return self.execution_mode is ExecutionMode.SEQUENTIAL
+
+    def sequence_tasks(self) -> list[Task]:
+        """Tasks run by the sequence, in order: active ones following the schedule."""
+        steps = [t for t in self.tasks if t.schedule_mode is ScheduleMode.INHERIT and t.is_active]
+        return sorted(steps, key=_sequence_key)
 
     @property
     def inherited_schedule(self) -> EffectiveSchedule:
@@ -146,6 +171,8 @@ class Task(TimestampMixin, Base):
     )
 
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Order inside a sequential subcategory (1 = first; NULL = after the numbered ones).
+    sequence_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Last scheduled fire time processed by the engine; base for missed-run detection.
     last_fire_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
@@ -166,6 +193,11 @@ class Task(TimestampMixin, Base):
         """A task only runs if it, its subcategory and its group are all active."""
         sub = self.subcategory
         return bool(self.is_active and sub.is_active and sub.group.is_active)
+
+    @property
+    def runs_in_sequence(self) -> bool:
+        """Started by its subcategory's sequence instead of its own schedule."""
+        return self.schedule_mode is ScheduleMode.INHERIT and self.subcategory.is_sequential
 
     @property
     def effective_schedule(self) -> EffectiveSchedule:

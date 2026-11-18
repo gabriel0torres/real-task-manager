@@ -27,7 +27,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rts.models import Group, ScheduleMode, Subcategory, Task, Variable, VariableScope
+from rts.models import (
+    ExecutionMode,
+    Group,
+    ScheduleMode,
+    Subcategory,
+    Task,
+    Variable,
+    VariableScope,
+)
 from rts.scheduling.cron import CronError
 from rts.scheduling.describe import describe
 from rts.security.crypto import SecretBox, SecretDecryptError
@@ -40,6 +48,7 @@ from rts.services.settings import (
 from rts.transfer.crypto import ExportCipher, WrongPasswordError
 from rts.transfer.format import (
     MAX_FILE_BYTES,
+    ExecutionDoc,
     ExportDoc,
     FileError,
     GroupDoc,
@@ -126,6 +135,7 @@ _TASK_LABELS = {
     "retry_interval_seconds": "intervalo entre tentativas",
     "overlap_policy": "sobreposição",
     "misfire_policy": "execuções perdidas",
+    "sequence_position": "ordem na sequência",
     "is_active": "ativa",
 }
 
@@ -144,6 +154,7 @@ def _task_fields(t: TaskDoc) -> dict:
         "retry_interval_seconds": t.retries.interval_seconds,
         "overlap_policy": t.overlap_policy,
         "misfire_policy": t.misfire_policy,
+        "sequence_position": t.sequence_position,
     }
 
 
@@ -160,6 +171,30 @@ MODE_LABELS = {
     ScheduleMode.MANUAL: "somente manual",
 }
 _SOURCE_LABELS = {"subcategory": "da subcategoria", "group": "do grupo"}
+
+
+EXECUTION_LABELS = {ExecutionMode.PARALLEL: "paralela", ExecutionMode.SEQUENTIAL: "sequencial"}
+
+
+def _execution(doc: ExecutionDoc | None) -> tuple[ExecutionMode, bool]:
+    return (doc.mode, doc.stop_on_failure) if doc is not None else (ExecutionMode.PARALLEL, False)
+
+
+def _sync_execution(sub: Subcategory, doc: ExecutionDoc | None, mode: str) -> list[str]:
+    """Like the schedule: missing in the file = keep on merge, back to parallel on overwrite."""
+    if doc is None and mode != "overwrite":
+        return []
+    execution_mode, stop = _execution(doc)
+    details = []
+    if sub.execution_mode is not execution_mode:
+        details.append(
+            f"execução: {EXECUTION_LABELS[sub.execution_mode]} → {EXECUTION_LABELS[execution_mode]}"
+        )
+    if sub.stop_on_failure != stop:
+        details.append("parar na falha: " + ("sim" if stop else "não"))
+    sub.execution_mode = execution_mode
+    sub.stop_on_failure = stop
+    return details
 
 
 def _task_schedule_detail(task: Task) -> str:
@@ -549,6 +584,7 @@ class _Importer:
         action: str = "create",
     ) -> None:
         crons, timezone = _owner_schedule(s.schedule)
+        execution_mode, stop = _execution(s.execution)
         sub = Subcategory(
             group_id=group.id,
             name=name or s.name,
@@ -556,10 +592,14 @@ class _Importer:
             is_active=s.active,
             cron_expressions=crons,
             timezone=timezone,
+            execution_mode=execution_mode,
+            stop_on_failure=stop,
         )
         self.s.add(sub)
         self.s.flush()
         details = [f"agendamento: {_describe(crons)}"] if crons else []
+        if execution_mode is ExecutionMode.SEQUENTIAL:
+            details.append("execução sequencial" + (" (para na falha)" if stop else ""))
         details += self._sync_vars(
             VariableScope.SUBCATEGORY,
             sub.id,
@@ -597,6 +637,7 @@ class _Importer:
             ex.is_active = s.active
             details.append("será ativada" if s.active else "será pausada")
         details += _sync_owner_schedule(ex, s.schedule, mode)
+        details += _sync_execution(ex, s.execution, mode)
         details += self._sync_vars(
             VariableScope.SUBCATEGORY,
             ex.id,
