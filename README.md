@@ -61,15 +61,27 @@ irm https://raw.githubusercontent.com/gabriel0torres/real-task-manager/main/inst
   Windows (conta SYSTEM) e são reiniciadas se pararem.
 - Mostra no final o endereço, o usuário e a senha inicial (que deve ser trocada no 1º acesso).
 
-Opções (baixe o `install.ps1` e execute com parâmetros):
+Com opções, use esta forma (os parâmetros vão no fim):
 
 ```powershell
-.\install.ps1 -Mode standalone        # força o executável (auto | python | standalone)
-.\install.ps1 -Port 8080 -AdminPassword "minha-senha-forte"
-.\install.ps1 -NoService              # não registra a inicialização automática
-.\install.ps1 -Version v0.1.0         # versão específica
-.\install.ps1 -From .\rts-0.1.0-windows-x64.zip   # instalação offline com o arquivo baixado
+$rts = [scriptblock]::Create((irm https://raw.githubusercontent.com/gabriel0torres/real-task-manager/main/install.ps1))
+& $rts -Mode standalone        # força o executável (auto | python | standalone)
+& $rts -Port 8080 -AdminPassword "minha-senha-forte"
+& $rts -NoService              # não registra a inicialização automática
+& $rts -Version v0.2.0         # versão específica
 ```
+
+Instalação offline (com o `install.ps1` e o pacote baixados da Release na mesma pasta):
+
+```powershell
+$rts = [scriptblock]::Create((Get-Content .\install.ps1 -Raw -Encoding UTF8))
+& $rts -From .\rts-0.2.0-windows-x64.zip
+```
+
+> Em servidores Windows antigos, se o download falhar com erro de TLS/SSL, rode antes
+> `[Net.ServicePointManager]::SecurityProtocol = 'Tls12'`. Também dá para executar o arquivo
+> diretamente (`.\install.ps1 -NoService`), mas no Windows PowerShell 5.1 os acentos das mensagens
+> podem aparecer trocados.
 
 Comandos úteis (`rts.cmd` fica na pasta de instalação):
 

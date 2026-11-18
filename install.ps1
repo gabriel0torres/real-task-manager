@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Instala (ou atualiza) o Real Task Scheduler no Windows, sem Docker.
 
@@ -204,8 +204,12 @@ try {
     if (-not $mode) { $mode = "auto" }
     $installer = Join-Path $env:TEMP "rts-install-$($req.version).ps1"
     Invoke-WebRequest "https://github.com/$($req.repo)/releases/download/$($req.version)/install.ps1" -OutFile $installer -UseBasicParsing
-    # Out-Host sends the installer output into the transcript (data\update.log).
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Version $req.version -InstallDir $InstallDir -Mode $mode -Repo $req.repo *>&1 | Out-Host
+    # The installer is UTF-8 without BOM (required by "irm | iex"); "-File" would read it as
+    # ANSI on Windows PowerShell 5.1, so load it explicitly as UTF-8 in a child process.
+    # Out-Host sends its output into the transcript (data\update.log).
+    $run = "& ([scriptblock]::Create([IO.File]::ReadAllText('$installer', [Text.Encoding]::UTF8))) " +
+           "-Version '$($req.version)' -InstallDir '$InstallDir' -Mode '$mode' -Repo '$($req.repo)'"
+    & powershell -NoProfile -ExecutionPolicy Bypass -Command $run *>&1 | Out-Host
     if ($LASTEXITCODE) { throw "o instalador terminou com código $LASTEXITCODE" }
     Save-Result $true "Atualizado para $($req.version)."
 } catch {
