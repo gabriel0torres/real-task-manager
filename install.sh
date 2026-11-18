@@ -73,6 +73,12 @@ find_python() {
     return 1
 }
 PYTHON="$(find_python || true)"
+# On an update the existing virtual environment already has its own Python.
+VENV_OK=0
+if [ -x "$INSTALL_DIR/venv/bin/python" ] \
+    && "$INSTALL_DIR/venv/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
+    VENV_OK=1
+fi
 
 if [ -n "$FROM" ]; then
     [ -f "$FROM" ] || fail "arquivo não encontrado: $FROM"
@@ -82,9 +88,9 @@ if [ -n "$FROM" ]; then
     fi
 fi
 if [ "$MODE" = auto ]; then
-    if [ -n "$PYTHON" ]; then MODE=python; else MODE=standalone; fi
+    if [ -n "$PYTHON" ] || [ $VENV_OK = 1 ]; then MODE=python; else MODE=standalone; fi
 fi
-if [ "$MODE" = python ] && [ -z "$PYTHON" ]; then
+if [ "$MODE" = python ] && [ -z "$PYTHON" ] && [ $VENV_OK = 0 ]; then
     fail "Python 3.12+ com o módulo venv não encontrado (Debian/Ubuntu: apt install python3-venv). Ou use --mode standalone."
 fi
 info "Modo de instalação: $MODE  |  diretório: $INSTALL_DIR"
@@ -96,19 +102,35 @@ fetch() {  # url output
     else fail "instale curl ou wget"; fi
 }
 
-get_artifact() {  # glob-like suffix to match the asset name
+# Release files are downloaded straight from github.com/<repo>/releases/download: their
+# names are predictable, and the GitHub API (60 requests per hour per IP without login)
+# is not needed.
+resolve_tag() {
+    if [ "$VERSION" != latest ]; then
+        case "$VERSION" in v*) echo "$VERSION" ;; *) echo "v$VERSION" ;; esac
+        return
+    fi
+    info "Consultando a versão mais nova em github.com/$REPO ..." >&2
+    if command -v curl >/dev/null 2>&1; then
+        final="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" || true)"
+    else
+        final="$(wget -S --spider "https://github.com/$REPO/releases/latest" 2>&1 \
+            | sed -n 's/^ *[Ll]ocation: *//p' | tail -n1 | tr -d '\r')"
+    fi
+    case "$final" in
+        */releases/tag/*) echo "${final##*/releases/tag/}" ;;
+        *) fail "nenhuma Release publicada em $REPO (ou sem acesso ao GitHub)" ;;
+    esac
+}
+
+get_artifact() {  # file name after "rts-<versão>-", e.g. py3-none-any.whl
     if [ -n "$FROM" ]; then echo "$FROM"; return; fi
-    if [ "$VERSION" = latest ]; then api="https://api.github.com/repos/$REPO/releases/latest"
-    else api="https://api.github.com/repos/$REPO/releases/tags/$VERSION"; fi
-    tmp="$(mktemp)"
-    info "Consultando versões em github.com/$REPO ..." >&2
-    fetch "$api" "$tmp" || fail "não foi possível obter a versão '$VERSION' de $REPO (há uma Release publicada?)"
-    url="$(grep -o "\"browser_download_url\": *\"[^\"]*$1\"" "$tmp" | head -n1 | sed 's/.*"\(http[^"]*\)"/\1/')"
-    rm -f "$tmp"
-    [ -n "$url" ] || fail "a versão não tem um arquivo terminado em $1"
-    out="${TMPDIR:-/tmp}/$(basename "$url")"
-    info "Baixando $(basename "$url")..." >&2
-    fetch "$url" "$out"
+    tag="$(resolve_tag)"
+    name="rts-${tag#v}-$1"
+    out="${TMPDIR:-/tmp}/$name"
+    info "Baixando $name ($tag)..." >&2
+    fetch "https://github.com/$REPO/releases/download/$tag/$name" "$out" \
+        || fail "não foi possível baixar $name da versão $tag (a versão existe?)"
     echo "$out"
 }
 
@@ -206,8 +228,12 @@ mkdir -p "$INSTALL_DIR"
 if [ "$MODE" = python ]; then
     WHEEL="$(get_artifact "py3-none-any.whl")"
     VENV="$INSTALL_DIR/venv"
-    if [ ! -x "$VENV/bin/python" ]; then
-        info "Criando ambiente virtual..."
+    if [ $VENV_OK = 1 ]; then
+        info "Usando o ambiente virtual existente ($VENV)."
+    else
+        [ -n "$PYTHON" ] || fail "Python 3.12+ não encontrado para recriar o ambiente virtual."
+        rm -rf "$VENV"  # missing or broken (its Python is gone)
+        info "Criando ambiente virtual com $PYTHON..."
         "$PYTHON" -m venv "$VENV" || fail "falha ao criar o ambiente virtual"
     fi
     info "Instalando o pacote (pode levar alguns minutos)..."

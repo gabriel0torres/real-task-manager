@@ -167,6 +167,12 @@ O RTS verifica a cada 12 horas se há uma versão nova publicada no GitHub. Quan
 
 ### Observações
 
+- No modo Python, as atualizações usam o ambiente virtual da instalação (`venv`), então não
+  dependem de o Python estar no PATH da conta que roda o atualizador (SYSTEM no Windows). Para
+  criar o ambiente, o instalador procura o Python no PATH, no registro do Windows e nas pastas
+  padrão (`C:\Program Files\Python3*`); instale o Python "para todos os usuários" no servidor.
+- Os instaladores baixam os arquivos direto de `github.com/<repo>/releases/download`, sem usar a
+  API do GitHub, que tem limite de 60 consultas por hora por IP.
 - No modo executável, tarefas com o interpretador **Python** usam o Python instalado na máquina
   (`py`/`python3`); o executável não inclui um interpretador para as tarefas.
 - O arquivo `.env` da pasta de instalação aceita todas as [variáveis de ambiente](#configuração-variáveis-de-ambiente).

@@ -55,51 +55,85 @@ if (-not $InstallDir) {
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { Fail "Somente Windows 64 bits é suportado." }
 
 # ------------------------------------------------------------------ python
-function Find-Python {
-    $candidates = @(
-        @{ exe = "py"; args = @("-3") },
-        @{ exe = "python"; args = @() },
-        @{ exe = "python3"; args = @() }
-    )
-    # Run each candidate: the Microsoft Store placeholder ("python" with no Python installed)
+function Test-Python([string] $exe, [string[]] $pyArgs) {
+    # Run the candidate: the Microsoft Store placeholder ("python" with no Python installed)
     # just prints a message and fails, while real installs (including the Python Install
     # Manager aliases in WindowsApps) answer the version check.
     $ErrorActionPreference = "Continue"
-    foreach ($c in $candidates) {
+    try {
+        $ok = & $exe @($pyArgs + @("-c", "import sys, venv; print(sys.version_info >= (3, 12))")) 2>$null
+        return "$ok".Trim() -eq "True"
+    } catch { return $false } finally { $ErrorActionPreference = "Stop" }
+}
+
+function Find-Python {
+    # 1. Commands on the PATH.
+    foreach ($c in @(@{ exe = "py"; args = @("-3") }, @{ exe = "python"; args = @() }, @{ exe = "python3"; args = @() })) {
         $cmd = Get-Command $c.exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        try {
-            $ok = & $cmd.Source @($c.args + @("-c", "import sys, venv; print(sys.version_info >= (3, 12))")) 2>$null
-            if ("$ok".Trim() -eq "True") { $ErrorActionPreference = "Stop"; return @{ exe = $cmd.Source; args = $c.args } }
-        } catch { }
+        if ($cmd -and (Test-Python $cmd.Source $c.args)) { return @{ exe = $cmd.Source; args = $c.args } }
     }
-    $ErrorActionPreference = "Stop"
+    # 2. Installations the PATH doesn't show. The web updater runs as SYSTEM, whose PATH
+    #    usually lacks a Python installed by a user: look at the registry (PEP 514), the
+    #    Python of the existing virtual environment and the usual folders.
+    $paths = @()
+    foreach ($root in "HKLM:\SOFTWARE\Python\PythonCore", "HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore", "HKCU:\SOFTWARE\Python\PythonCore") {
+        foreach ($key in (Get-ChildItem $root -ErrorAction SilentlyContinue)) {
+            $install = Get-ItemProperty (Join-Path $key.PSPath "InstallPath") -ErrorAction SilentlyContinue
+            if ($install.ExecutablePath) { $paths += $install.ExecutablePath }
+            elseif ($install."(default)") { $paths += Join-Path $install."(default)" "python.exe" }
+        }
+    }
+    $cfg = Join-Path $InstallDir "venv\pyvenv.cfg"
+    if (Test-Path $cfg) {
+        $homeLine = (Get-Content $cfg) -match "^home\s*=" | Select-Object -First 1
+        if ($homeLine) { $paths += Join-Path (($homeLine -split "=", 2)[1].Trim()) "python.exe" }
+    }
+    $paths += @(Get-ChildItem "$env:ProgramFiles\Python3*\python.exe", "$env:SystemDrive\Python3*\python.exe" -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | ForEach-Object { $_.FullName })
+    foreach ($path in ($paths | Select-Object -Unique)) {
+        if ((Test-Path $path) -and (Test-Python $path @())) { return @{ exe = $path; args = @() } }
+    }
     return $null
 }
 
+# On an update the existing virtual environment already has its own Python.
+$VenvPython = Join-Path $InstallDir "venv\Scripts\python.exe"
+$HasVenv = (Test-Path $VenvPython) -and (Test-Python $VenvPython @())
 $Python = Find-Python
 if ($From) {
     if (-not (Test-Path $From)) { Fail "Arquivo não encontrado: $From" }
     $From = (Resolve-Path $From).Path
     if ($Mode -eq "auto") { $Mode = if ($From -like "*.whl") { "python" } else { "standalone" } }
 }
-if ($Mode -eq "auto") { $Mode = if ($Python) { "python" } else { "standalone" } }
-if ($Mode -eq "python" -and -not $Python) { Fail "Python 3.12+ não encontrado. Instale-o ou use -Mode standalone." }
+if ($Mode -eq "auto") { $Mode = if ($Python -or $HasVenv) { "python" } else { "standalone" } }
+if ($Mode -eq "python" -and -not $Python -and -not $HasVenv) {
+    Fail "Python 3.12+ não encontrado. Instale-o (para todos os usuários) ou use -Mode standalone."
+}
 Info "Modo de instalação: $Mode  |  diretório: $InstallDir"
 
 # ------------------------------------------------------------------ download
+# Release files are downloaded straight from github.com/<repo>/releases/download: their
+# names are predictable, and the GitHub API (60 requests per hour per IP without login)
+# is not needed.
+function Resolve-Tag {
+    if ($Version -ne "latest") { return $(if ($Version.StartsWith("v")) { $Version } else { "v$Version" }) }
+    Info "Consultando a versão mais nova em github.com/$Repo ..."
+    try {
+        $response = (Invoke-WebRequest "https://github.com/$Repo/releases/latest" -Method Head -UseBasicParsing).BaseResponse
+        $final = if ($response.ResponseUri) { $response.ResponseUri } else { $response.RequestMessage.RequestUri }
+    } catch { Fail "Não foi possível consultar github.com/$Repo ($_)" }
+    if ("$final" -notmatch "/releases/tag/([^/?#]+)") { Fail "Nenhuma Release publicada em $Repo." }
+    return $Matches[1]
+}
+
 function Get-Artifact([string] $pattern) {
     if ($From) { return $From }
-    $api = if ($Version -eq "latest") { "https://api.github.com/repos/$Repo/releases/latest" }
-           else { "https://api.github.com/repos/$Repo/releases/tags/$Version" }
-    Info "Consultando versões em github.com/$Repo ..."
-    try { $release = Invoke-RestMethod $api -Headers @{ "User-Agent" = "rts-installer" } }
-    catch { Fail "Não foi possível obter a versão '$Version' de $Repo. Há uma Release publicada? ($_)" }
-    $asset = $release.assets | Where-Object { $_.name -like $pattern } | Select-Object -First 1
-    if (-not $asset) { Fail "A versão $($release.tag_name) não tem o arquivo $pattern." }
-    $target = Join-Path $env:TEMP $asset.name
-    Info "Baixando $($asset.name) ($([math]::Round($asset.size / 1MB, 1)) MB)..."
-    Invoke-WebRequest $asset.browser_download_url -OutFile $target -UseBasicParsing
+    $tag = Resolve-Tag
+    $name = $pattern.Replace("*", $tag.TrimStart("v"))
+    $target = Join-Path $env:TEMP $name
+    Info "Baixando $name ($tag)..."
+    try { Invoke-WebRequest "https://github.com/$Repo/releases/download/$tag/$name" -OutFile $target -UseBasicParsing }
+    catch { Fail "Não foi possível baixar $name da versão $tag (a versão existe?): $_" }
     return $target
 }
 
@@ -211,8 +245,12 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 if ($Mode -eq "python") {
     $wheel = Get-Artifact "rts-*-py3-none-any.whl"
     $venv = Join-Path $InstallDir "venv"
-    if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
-        Info "Criando ambiente virtual..."
+    if ($HasVenv) {
+        Info "Usando o ambiente virtual existente ($venv)."
+    } else {
+        if (-not $Python) { Fail "Python 3.12+ não encontrado para recriar o ambiente virtual." }
+        if (Test-Path $venv) { Remove-Item -Recurse -Force $venv }  # broken: its Python is gone
+        Info "Criando ambiente virtual com $($Python.exe)..."
         & $Python.exe @($Python.args + @("-m", "venv", $venv))
         if ($LASTEXITCODE) { Fail "Falha ao criar o ambiente virtual." }
     }
