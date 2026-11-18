@@ -1,12 +1,13 @@
-import { Loader2 } from "lucide-react";
+import { CircleHelp, Loader2 } from "lucide-react";
 import type {
   ButtonHTMLAttributes,
+  CSSProperties,
   InputHTMLAttributes,
   ReactNode,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { forwardRef, useId } from "react";
+import { forwardRef, useEffect, useId, useRef, useState } from "react";
 
 export function cx(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(" ");
@@ -112,24 +113,100 @@ export function PageHeader({
   );
 }
 
+const TIP_WIDTH = 320;
+const TIP_MARGIN = 8;
+
+/**
+ * "?" icon that explains a field: shown on hover, on keyboard focus and on tap (touch).
+ * The bubble uses fixed positioning so cards with overflow never clip it.
+ */
+export function HelpTip({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [style, setStyle] = useState<CSSProperties>({});
+  const button = useRef<HTMLButtonElement>(null);
+  const tipId = useId();
+
+  const show = () => {
+    const rect = button.current?.getBoundingClientRect();
+    if (rect) {
+      const width = Math.min(TIP_WIDTH, window.innerWidth - 2 * TIP_MARGIN);
+      const left = Math.min(
+        Math.max(TIP_MARGIN, rect.left + rect.width / 2 - width / 2),
+        window.innerWidth - width - TIP_MARGIN,
+      );
+      setStyle({ top: rect.bottom + 6, left, width });
+    }
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        aria-label={`Ajuda: ${label}`}
+        aria-describedby={open ? tipId : undefined}
+        className="inline-flex rounded-full text-slate-400 hover:text-indigo-600 focus:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        onMouseEnter={show}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={show}
+        onBlur={() => setOpen(false)}
+        onClick={show}
+      >
+        <CircleHelp className="size-4" aria-hidden />
+      </button>
+      {open && (
+        <div
+          id={tipId}
+          role="tooltip"
+          style={style}
+          className="pointer-events-none fixed z-50 space-y-1.5 rounded-md bg-slate-800 px-3 py-2 text-xs font-normal leading-relaxed text-white shadow-lg"
+        >
+          {children}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function Field({
   label,
   hint,
+  help,
   error,
   children,
   htmlFor,
 }: {
   label: ReactNode;
   hint?: ReactNode;
+  /** Longer explanation, shown in a "?" tooltip next to the label. */
+  help?: ReactNode;
   error?: ReactNode;
   children: ReactNode;
   htmlFor?: string;
 }) {
   return (
     <div className="space-y-1">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-slate-700">
-        {label}
-      </label>
+      <div className="flex items-center gap-1">
+        <label htmlFor={htmlFor} className="block text-sm font-medium text-slate-700">
+          {label}
+        </label>
+        {help && <HelpTip label={typeof label === "string" ? label : "campo"}>{help}</HelpTip>}
+      </div>
       {children}
       {error ? (
         <p className="text-xs text-red-600">{error}</p>

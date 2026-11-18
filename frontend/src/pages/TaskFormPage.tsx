@@ -183,6 +183,23 @@ function TaskForm({
               label="Diretório de trabalho"
               htmlFor="task-workdir"
               hint="Vazio = diretório próprio da tarefa dentro da pasta de dados do RTS."
+              help={
+                <>
+                  <p>
+                    Pasta em que o comando é executado (o &quot;diretório atual&quot; do processo). Caminhos
+                    relativos no comando e nos arquivos que o script lê ou grava partem dela.
+                  </p>
+                  <p>
+                    Ex.: com <code className="font-mono">C:\Projetos\robos</code> aqui, o comando pode ser só{" "}
+                    <code className="font-mono">python main.py</code>, em vez do caminho completo.
+                  </p>
+                  <p>
+                    Vazio: o RTS cria uma pasta só desta tarefa dentro da pasta de dados (
+                    <code className="font-mono">data/workspaces/&lt;id&gt;</code>), apagada junto com a tarefa.
+                    A pasta informada precisa existir no servidor onde o RTS roda.
+                  </p>
+                </>
+              }
             >
               <Input
                 id="task-workdir"
