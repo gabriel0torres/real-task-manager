@@ -7,10 +7,11 @@ from rts.models.enums import (
     OverlapPolicy,
     RunStatus,
     RunTrigger,
+    ScheduleMode,
     Shell,
     VariableScope,
 )
-from rts.models.hierarchy import Group, Subcategory, Task
+from rts.models.hierarchy import EffectiveSchedule, Group, Subcategory, Task
 from rts.models.notification import NotificationRule
 from rts.models.run import Run, RunLogChunk
 from rts.models.system import Setting, WorkerHeartbeat
@@ -18,6 +19,7 @@ from rts.models.variable import Variable
 
 __all__ = [
     "ApiToken",
+    "EffectiveSchedule",
     "Group",
     "NotificationRule",
     "User",
@@ -29,6 +31,7 @@ __all__ = [
     "RunLogChunk",
     "RunStatus",
     "RunTrigger",
+    "ScheduleMode",
     "Setting",
     "Shell",
     "Subcategory",

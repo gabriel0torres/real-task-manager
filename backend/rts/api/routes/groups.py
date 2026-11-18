@@ -13,7 +13,7 @@ router = APIRouter(prefix="/groups", tags=["Grupos"], responses={404: {"model": 
 
 @router.get("", response_model=list[GroupOut], summary="Listar grupos")
 def list_groups(session: SessionDep):
-    return svc.list_groups(session)
+    return [svc.group_to_out(g) for g in svc.list_groups(session)]
 
 
 @router.post(
@@ -26,12 +26,12 @@ def list_groups(session: SessionDep):
 def create_group(data: GroupCreate, session: SessionDep):
     group = svc.create_group(session, data)
     session.commit()
-    return group
+    return svc.group_to_out(group)
 
 
 @router.get("/{group_id}", response_model=GroupOut, summary="Obter grupo")
 def get_group(group_id: int, session: SessionDep):
-    return svc.get_group(session, group_id)
+    return svc.group_to_out(svc.get_group(session, group_id))
 
 
 @router.patch(
@@ -43,7 +43,7 @@ def get_group(group_id: int, session: SessionDep):
 def update_group(group_id: int, data: GroupUpdate, session: SessionDep):
     group = svc.update_group(session, group_id, data)
     session.commit()
-    return group
+    return svc.group_to_out(group)
 
 
 @router.delete(

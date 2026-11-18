@@ -326,8 +326,8 @@ estado de cada tarefa: 🟢 última execução com sucesso, 🔴 falhou, 🔵 ro
 | Comando | Uma ou várias linhas, executadas pelo interpretador escolhido |
 | Interpretador | Padrão do servidor (`bash`/`sh` no Linux, `cmd` no Windows), `bash`, `sh`, `python`, `powershell`, `pwsh`, `cmd` |
 | Diretório de trabalho | Vazio = pasta própria da tarefa em `RTS_DATA_DIR/workspaces/<id>` |
-| Agendamento | Construtor visual ou cron (veja abaixo); vazio = só manual/API |
-| Fuso horário | Vazio = fuso padrão |
+| Agendamento | **Herdar** (da subcategoria ou do grupo), **Próprio** (construtor visual ou cron) ou **Somente manual** — veja abaixo |
+| Fuso horário | Do agendamento próprio; vazio = fuso padrão |
 | Timeout | Encerra o processo (e os filhos) após N segundos |
 | Novas tentativas | Em caso de falha ou timeout, com intervalo configurável |
 | Sobreposição | **Pular** (registra como "pulada"), **Enfileirar** (no máximo 1 na fila) ou **Paralelo** |
@@ -341,6 +341,31 @@ mostra a descrição ("Toda segunda e quarta às 08:30") e as 5 próximas execu�
 
 No modo avançado, use cron padrão de 5 campos (`minuto hora dia mês dia-da-semana`), uma expressão
 por linha. `L` = último dia do mês; domingo = `0` ou `7`. Ex.: `*/10 8-17 * * 1-5`.
+
+#### Agendamento padrão (herdado)
+
+Grupos e subcategorias podem ter um **agendamento padrão** (card *Agendamento padrão* na tela de
+cada um). Assim, "todas as tarefas do cliente X a cada 2 horas" é configurado num lugar só. Cada
+tarefa escolhe a **origem do agendamento**:
+
+| Origem | Comportamento |
+|---|---|
+| **Herdar** | Usa o agendamento da subcategoria; se ela não tiver, o do grupo. Muda junto quando ele muda. |
+| **Próprio** | Usa o horário definido na tarefa, que **substitui** o herdado e não muda com a subcategoria/grupo. |
+| **Somente manual** | Nunca roda por horário (só "Executar agora" ou API), mesmo havendo um agendamento acima. |
+
+- Tarefas novas começam em **Herdar** quando a subcategoria ou o grupo têm agendamento; caso
+  contrário, em **Próprio** (todo dia às 08:00).
+- O agendamento herdado vale com o fuso de quem o define (subcategoria ou grupo).
+- Ao trocar uma tarefa para *Herdar* ou *Somente manual*, o horário próprio fica guardado e volta
+  se ela for trocada para *Próprio* de novo.
+- Antes de salvar um agendamento padrão, a tela mostra quais tarefas serão afetadas e quais têm
+  agendamento próprio (e não mudam). A lista de tarefas mostra a origem de cada uma.
+- Cada tarefa continua sendo disparada sozinha: sobreposição, timeout, novas tentativas e
+  execuções perdidas funcionam por tarefa, como antes. Tarefas que herdam o mesmo horário começam
+  juntas, em paralelo.
+- Pela API, `schedule_mode` (`own`, `inherit`, `manual`) indica a origem; sem ele, uma tarefa com
+  expressões cron é `own` e sem expressões é `manual`, como nas versões anteriores.
 
 ### Execução
 
@@ -449,8 +474,8 @@ subcategoria use o botão **Exportar**. O arquivo é um YAML legível e versiona
 (`schema_version`). Exemplo completo: [examples/exemplo-export.yaml](examples/exemplo-export.yaml).
 
 ```yaml
-schema_version: 1            # formato do arquivo (validado antes de importar)
-rts_version: 0.1.0
+schema_version: 2            # formato do arquivo (validado antes de importar)
+rts_version: 0.3.0
 exported_at: '2026-11-17T12:00:00Z'
 scope: group                 # system | group | subcategory
 secrets_mode: omit           # omit (segredos sem valor) | encrypted (cifrados com senha)
@@ -461,9 +486,17 @@ groups:
   - key: API_TOKEN
     secret: true
     value: null              # "a preencher" na importação
+  schedule:                  # agendamento padrão do grupo (opcional)
+    cron: ['0 */2 * * *']
+    timezone: null
   subcategories:
   - name: relatorios
     tasks:
+    - name: resumo-horario
+      command: echo resumo
+      schedule:
+        mode: inherit        # inherit | own | manual (sem "mode": own se houver cron, senão manual)
+        cron: []
     - name: relatorio-diario
       command: |
         echo "várias linhas"
@@ -479,6 +512,13 @@ groups:
 ```
 
 Exportações `system` incluem também `settings` (fuso padrão) e `variables` (globais).
+
+O arquivo usa `schema_version: 2` só quando há agendamento herdado (agendamento em grupo ou
+subcategoria, ou tarefa com `mode: inherit`); sem isso continua `1` e pode ser importado em
+instalações mais antigas. Ao exportar só uma subcategoria que herda o agendamento do grupo, o
+agendamento do grupo vai junto na subcategoria, para as tarefas chegarem com o mesmo horário.
+Na importação com *mesclar*, um grupo/subcategoria sem agendamento no arquivo mantém o atual; com
+*sobrescrever*, fica sem.
 
 - **Segredos**: sem valor (só as chaves, marcadas "a preencher") ou cifrados com uma senha
   (PBKDF2-SHA256 + Fernet), pedida na importação.

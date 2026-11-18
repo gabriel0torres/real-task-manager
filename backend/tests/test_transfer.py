@@ -285,7 +285,7 @@ def test_imported_tasks_are_paused_by_default(client, make, other_app):
         ("a: [unclosed", "YAML inválido (linha"),
         ("- just\n- a list\n", "não é uma exportação do RTS"),
         ("foo: 1\n", "schema_version"),
-        ("schema_version: 2\n", "suporta até 1"),
+        ("schema_version: 3\n", "suporta até 2"),
     ],
 )
 def test_invalid_files_are_rejected_before_any_change(client, content, message):

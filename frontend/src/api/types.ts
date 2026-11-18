@@ -14,8 +14,19 @@ export type MisfirePolicy = "run_once" | "ignore";
 export type Shell = "bash" | "sh" | "cmd" | "powershell" | "pwsh" | "python";
 export type VariableScope = "global" | "group" | "subcategory" | "task";
 export type LogStream = "stdout" | "stderr" | "system";
+/** Where a task's schedule comes from. */
+export type TaskScheduleMode = "own" | "inherit" | "manual";
+/** Where the effective schedule actually comes from ("none": inherits, but nothing above). */
+export type ScheduleSource = "task" | "subcategory" | "group" | "manual" | "none";
 
-export interface Group {
+/** Default schedule of a group or subcategory, inherited by tasks (empty = none). */
+export interface ScheduleOwner {
+  cron_expressions: string[];
+  timezone: string | null;
+  schedule_description: string;
+}
+
+export interface Group extends ScheduleOwner {
   id: number;
   name: string;
   description: string;
@@ -24,13 +35,22 @@ export interface Group {
   updated_at: string;
 }
 
-export interface Subcategory {
+export interface InheritedSchedule {
+  source: ScheduleSource;
+  cron_expressions: string[];
+  timezone: string | null;
+  description: string;
+}
+
+export interface Subcategory extends ScheduleOwner {
   id: number;
   group_id: number;
   name: string;
   description: string;
   is_active: boolean;
   is_effectively_active: boolean;
+  /** What tasks set to "inherit" follow: this subcategory's schedule, else the group's. */
+  inherited_schedule: InheritedSchedule;
   created_at: string;
   updated_at: string;
 }
@@ -44,9 +64,14 @@ export interface Task {
   command: string;
   shell: Shell | null;
   working_dir: string | null;
+  schedule_mode: TaskScheduleMode;
+  /** The task's own schedule (kept even while it inherits or is manual). */
   cron_expressions: string[];
-  schedule_description: string;
   timezone: string | null;
+  schedule_source: ScheduleSource;
+  effective_cron_expressions: string[];
+  /** Description of the effective schedule. */
+  schedule_description: string;
   effective_timezone: string;
   timeout_seconds: number | null;
   max_retries: number;
@@ -64,6 +89,8 @@ export type TaskInput = Omit<
   Task,
   | "id"
   | "group_id"
+  | "schedule_source"
+  | "effective_cron_expressions"
   | "schedule_description"
   | "effective_timezone"
   | "is_effectively_active"

@@ -2,22 +2,54 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import JSON, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from rts.db import Base
 from rts.models.base import TimestampMixin, UTCDateTime, str_enum
-from rts.models.enums import MisfirePolicy, OverlapPolicy, Shell
+from rts.models.enums import MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
 
 if TYPE_CHECKING:
     from rts.models.run import Run
     from rts.models.variable import Variable
 
+ScheduleSource = Literal["task", "subcategory", "group", "manual", "none"]
 
-class Group(TimestampMixin, Base):
+
+@dataclass(frozen=True)
+class EffectiveSchedule:
+    """The schedule a task actually follows, and where it comes from.
+
+    ``source``: ``task`` (own schedule), ``subcategory``/``group`` (inherited),
+    ``manual`` (explicitly manual) or ``none`` (inherits, but no ancestor has one).
+    The cron expressions and the time zone always travel together: an inherited
+    schedule uses its owner's time zone (``None`` = the system default).
+    """
+
+    expressions: tuple[str, ...]
+    timezone: str | None
+    source: ScheduleSource
+
+    def __bool__(self) -> bool:
+        return bool(self.expressions)
+
+    def tz(self, default: str) -> str:
+        return self.timezone or default
+
+
+class _ScheduleOwner:
+    """Group and subcategory: an optional schedule their tasks may inherit."""
+
+    # Empty list = no schedule of its own (a subcategory then falls back to its group).
+    cron_expressions: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class Group(_ScheduleOwner, TimestampMixin, Base):
     __tablename__ = "groups"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -38,7 +70,7 @@ class Group(TimestampMixin, Base):
     __table_args__ = (Index("uq_groups_name_ci", func.lower(name), unique=True),)
 
 
-class Subcategory(TimestampMixin, Base):
+class Subcategory(_ScheduleOwner, TimestampMixin, Base):
     __tablename__ = "subcategories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -68,6 +100,16 @@ class Subcategory(TimestampMixin, Base):
     def is_effectively_active(self) -> bool:
         return bool(self.is_active and self.group.is_active)
 
+    @property
+    def inherited_schedule(self) -> EffectiveSchedule:
+        """What a task set to "inherit" in this subcategory follows."""
+        if self.cron_expressions:
+            return EffectiveSchedule(tuple(self.cron_expressions), self.timezone, "subcategory")
+        group = self.group
+        if group.cron_expressions:
+            return EffectiveSchedule(tuple(group.cron_expressions), group.timezone, "group")
+        return EffectiveSchedule((), None, "none")
+
 
 class Task(TimestampMixin, Base):
     __tablename__ = "tasks"
@@ -83,7 +125,11 @@ class Task(TimestampMixin, Base):
     shell: Mapped[Shell | None] = mapped_column(str_enum(Shell, "task_shell"), nullable=True)
     working_dir: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
-    # One or more standard 5-field cron expressions (fires when any matches).
+    schedule_mode: Mapped[ScheduleMode] = mapped_column(
+        str_enum(ScheduleMode, "task_schedule_mode"), default=ScheduleMode.OWN, nullable=False
+    )
+    # The task's own schedule: one or more standard 5-field cron expressions (fires when
+    # any matches). Only used in "own" mode, but kept when switching to another mode.
     cron_expressions: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
@@ -120,3 +166,13 @@ class Task(TimestampMixin, Base):
         """A task only runs if it, its subcategory and its group are all active."""
         sub = self.subcategory
         return bool(self.is_active and sub.is_active and sub.group.is_active)
+
+    @property
+    def effective_schedule(self) -> EffectiveSchedule:
+        if self.schedule_mode is ScheduleMode.MANUAL:
+            return EffectiveSchedule((), None, "manual")
+        if self.schedule_mode is ScheduleMode.INHERIT:
+            return self.subcategory.inherited_schedule
+        if not self.cron_expressions:
+            return EffectiveSchedule((), None, "manual")
+        return EffectiveSchedule(tuple(self.cron_expressions), self.timezone, "task")

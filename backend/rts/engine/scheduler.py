@@ -234,13 +234,14 @@ class SchedulerEngine:
     def _apply_missed_runs(self, session: Session, downtime_start: datetime, now: datetime) -> None:
         default_tz = get_default_timezone(session, self.ctx.settings.default_timezone)
         for task in self._load_tasks(session):
-            if not task.is_effectively_active or not task.cron_expressions:
+            schedule = task.effective_schedule
+            if not task.is_effectively_active or not schedule:
                 continue
             # Tasks created while the engine was down only miss fires after creation.
             since = max(downtime_start, task.last_fire_at or downtime_start, task.created_at)
             try:
                 missed = fire_times_between(
-                    task.cron_expressions, task.timezone or default_tz, since, now
+                    list(schedule.expressions), schedule.tz(default_tz), since, now
                 )
             except CronError:
                 continue
@@ -280,8 +281,10 @@ class SchedulerEngine:
             default_tz = get_default_timezone(session, self.ctx.settings.default_timezone)
             desired: dict[int, tuple] = {}
             for task in self._load_tasks(session):
-                if task.is_effectively_active and task.cron_expressions:
-                    desired[task.id] = (tuple(task.cron_expressions), task.timezone or default_tz)
+                # The effective schedule may be inherited from the subcategory or group.
+                schedule = task.effective_schedule
+                if task.is_effectively_active and schedule:
+                    desired[task.id] = (schedule.expressions, schedule.tz(default_tz))
 
         for task_id in set(self._job_signatures) - set(desired):
             if self._scheduler.get_job(_job_id(task_id)):
@@ -322,7 +325,7 @@ class SchedulerEngine:
         now = self.ctx.clock()
         with self.ctx.session_factory() as session:
             task = session.get(Task, task_id)
-            if task is None or not task.is_effectively_active or not task.cron_expressions:
+            if task is None or not task.is_effectively_active or not task.effective_schedule:
                 return None
             if task.last_fire_at is not None and scheduled_time <= task.last_fire_at:
                 return None  # already handled (e.g. by recovery)

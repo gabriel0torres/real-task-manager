@@ -6,6 +6,7 @@ import {
   useCreateSubcategory,
   useDeleteSubcategory,
   useGroup,
+  useSettings,
   useSubcategory,
   useTasks,
   useUpdateSubcategory,
@@ -14,6 +15,7 @@ import { EntityForm } from "../components/EntityForm";
 import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { DefaultScheduleCard } from "../features/schedule/DefaultScheduleCard";
 import { TaskTable } from "../features/tasks/TaskTable";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
@@ -65,6 +67,7 @@ export function SubcategoryPage() {
   const { data: sub, isLoading, error } = useSubcategory(subcategoryId);
   const { data: group } = useGroup(sub?.group_id ?? 0);
   const { data: tasks } = useTasks(subcategoryId);
+  const { data: settings } = useSettings();
   const update = useUpdateSubcategory();
   const remove = useDeleteSubcategory();
   const [editing, setEditing] = useState(false);
@@ -157,6 +160,30 @@ export function SubcategoryPage() {
               }
             />
           </Card>
+        )}
+
+        {settings && tasks && group && (
+          <DefaultScheduleCard
+            kind="subcategory"
+            owner={sub}
+            group={{ id: group.id, name: group.name, owner: group }}
+            affected={tasks.filter((t) => t.schedule_mode === "inherit")}
+            ownSchedule={tasks.filter((t) => t.schedule_mode === "own")}
+            defaultTimezone={settings.default_timezone}
+            busy={update.isPending}
+            onSave={(schedule, done) =>
+              update.mutate(
+                { id: sub.id, ...schedule },
+                {
+                  onSuccess: () => {
+                    toast.success("Agendamento padrão da subcategoria salvo.");
+                    done();
+                  },
+                  onError: toast.error,
+                },
+              )
+            }
+          />
         )}
 
         <Card

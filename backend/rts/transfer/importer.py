@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rts.models import Group, Subcategory, Task, Variable, VariableScope
+from rts.models import Group, ScheduleMode, Subcategory, Task, Variable, VariableScope
 from rts.scheduling.cron import CronError
 from rts.scheduling.describe import describe
 from rts.security.crypto import SecretBox, SecretDecryptError
@@ -43,6 +43,7 @@ from rts.transfer.format import (
     ExportDoc,
     FileError,
     GroupDoc,
+    ScheduleDoc,
     SubcategoryDoc,
     TaskDoc,
     VariableDoc,
@@ -117,6 +118,7 @@ _TASK_LABELS = {
     "command": "comando",
     "shell": "interpretador",
     "working_dir": "diretório de trabalho",
+    "schedule_mode": "origem do agendamento",
     "cron_expressions": "agendamento",
     "timezone": "fuso horário",
     "timeout_seconds": "timeout",
@@ -134,6 +136,7 @@ def _task_fields(t: TaskDoc) -> dict:
         "command": t.command,
         "shell": t.shell,
         "working_dir": t.working_dir,
+        "schedule_mode": t.schedule.effective_mode,
         "cron_expressions": list(t.schedule.cron),
         "timezone": t.schedule.timezone,
         "timeout_seconds": t.timeout_seconds,
@@ -144,11 +147,52 @@ def _task_fields(t: TaskDoc) -> dict:
     }
 
 
-def _describe(expressions: list[str]) -> str:
+def _describe(expressions) -> str:
     try:
-        return describe(expressions)
+        return describe(list(expressions))
     except CronError:
         return "agendamento inválido"
+
+
+MODE_LABELS = {
+    ScheduleMode.OWN: "próprio",
+    ScheduleMode.INHERIT: "herdado",
+    ScheduleMode.MANUAL: "somente manual",
+}
+_SOURCE_LABELS = {"subcategory": "da subcategoria", "group": "do grupo"}
+
+
+def _task_schedule_detail(task: Task) -> str:
+    effective = task.effective_schedule
+    if effective.source in _SOURCE_LABELS:
+        return f"agendamento herdado {_SOURCE_LABELS[effective.source]}: " + _describe(
+            effective.expressions
+        )
+    if effective.source == "none":
+        return "herda o agendamento, mas a subcategoria e o grupo não têm um (só execução manual)"
+    return _describe(effective.expressions)
+
+
+def _owner_schedule(doc: ScheduleDoc | None) -> tuple[list[str], str | None]:
+    return (list(doc.cron), doc.timezone) if doc is not None else ([], None)
+
+
+def _sync_owner_schedule(
+    owner: Group | Subcategory, doc: ScheduleDoc | None, mode: str
+) -> list[str]:
+    """Group/subcategory schedule. A file without one clears it on overwrite and keeps
+    the current one on merge (files from before inherited schedules never have one)."""
+    if doc is None and mode != "overwrite":
+        return []
+    crons, timezone = _owner_schedule(doc)
+    details = []
+    if list(owner.cron_expressions) != crons:
+        details.append(f"agendamento: {_describe(owner.cron_expressions)} → {_describe(crons)}")
+    elif owner.timezone != timezone:
+        details.append("fuso do agendamento alterado")
+    owner.cron_expressions = crons
+    owner.timezone = timezone
+    return details
 
 
 @dataclass
@@ -408,7 +452,7 @@ class _Importer:
         )
         self.s.add(task)
         self.s.flush()
-        details = [_describe(task.cron_expressions)]
+        details = [_task_schedule_detail(task)]
         if t.active and not task.is_active:
             details.append("entra pausada")
         details += self._sync_vars(
@@ -432,8 +476,13 @@ class _Importer:
         for column, value in wanted.items():
             current = getattr(ex, column)
             if current != value:
-                if column == "cron_expressions":
-                    details.append(f"agendamento: {_describe(current)} → {_describe(value)}")
+                if column == "schedule_mode":
+                    details.append(
+                        f"origem do agendamento: {MODE_LABELS[current]} → {MODE_LABELS[value]}"
+                    )
+                elif column == "cron_expressions":
+                    label = "agendamento próprio" if value or current else "agendamento"
+                    details.append(f"{label}: {_describe(current)} → {_describe(value)}")
                 elif column == "is_active":
                     details.append("entra pausada" if not value else "será ativada")
                 else:
@@ -499,12 +548,19 @@ class _Importer:
         name: str | None = None,
         action: str = "create",
     ) -> None:
+        crons, timezone = _owner_schedule(s.schedule)
         sub = Subcategory(
-            group_id=group.id, name=name or s.name, description=s.description, is_active=s.active
+            group_id=group.id,
+            name=name or s.name,
+            description=s.description,
+            is_active=s.active,
+            cron_expressions=crons,
+            timezone=timezone,
         )
         self.s.add(sub)
         self.s.flush()
-        details = self._sync_vars(
+        details = [f"agendamento: {_describe(crons)}"] if crons else []
+        details += self._sync_vars(
             VariableScope.SUBCATEGORY,
             sub.id,
             s.variables,
@@ -540,6 +596,7 @@ class _Importer:
         if ex.is_active != s.active:
             ex.is_active = s.active
             details.append("será ativada" if s.active else "será pausada")
+        details += _sync_owner_schedule(ex, s.schedule, mode)
         details += self._sync_vars(
             VariableScope.SUBCATEGORY,
             ex.id,
@@ -619,10 +676,18 @@ class _Importer:
     def create_group(
         self, g: GroupDoc, path: str, name: str | None = None, action: str = "create"
     ) -> None:
-        group = Group(name=name or g.name, description=g.description, is_active=g.active)
+        crons, timezone = _owner_schedule(g.schedule)
+        group = Group(
+            name=name or g.name,
+            description=g.description,
+            is_active=g.active,
+            cron_expressions=crons,
+            timezone=timezone,
+        )
         self.s.add(group)
         self.s.flush()
-        details = self._sync_vars(
+        details = [f"agendamento: {_describe(crons)}"] if crons else []
+        details += self._sync_vars(
             VariableScope.GROUP, group.id, g.variables, path, f"Grupo {group.name}", "exact"
         )
         self._item(
@@ -645,6 +710,7 @@ class _Importer:
         if ex.is_active != g.active:
             ex.is_active = g.active
             details.append("será ativado" if g.active else "será pausado")
+        details += _sync_owner_schedule(ex, g.schedule, mode)
         details += self._sync_vars(
             VariableScope.GROUP,
             ex.id,

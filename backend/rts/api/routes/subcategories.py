@@ -17,7 +17,7 @@ router = APIRouter(
 
 @router.get("", response_model=list[SubcategoryOut], summary="Listar subcategorias")
 def list_subcategories(session: SessionDep, group_id: int | None = None):
-    return svc.list_subcategories(session, group_id)
+    return [svc.subcategory_to_out(s) for s in svc.list_subcategories(session, group_id)]
 
 
 @router.post(
@@ -30,12 +30,12 @@ def list_subcategories(session: SessionDep, group_id: int | None = None):
 def create_subcategory(data: SubcategoryCreate, session: SessionDep):
     sub = svc.create_subcategory(session, data)
     session.commit()
-    return sub
+    return svc.subcategory_to_out(sub)
 
 
 @router.get("/{subcategory_id}", response_model=SubcategoryOut, summary="Obter subcategoria")
 def get_subcategory(subcategory_id: int, session: SessionDep):
-    return svc.get_subcategory(session, subcategory_id)
+    return svc.subcategory_to_out(svc.get_subcategory(session, subcategory_id))
 
 
 @router.get(
@@ -56,7 +56,7 @@ def get_inherited_variables(subcategory_id: int, session: SessionDep):
 def update_subcategory(subcategory_id: int, data: SubcategoryUpdate, session: SessionDep):
     sub = svc.update_subcategory(session, subcategory_id, data)
     session.commit()
-    return sub
+    return svc.subcategory_to_out(sub)
 
 
 @router.delete(

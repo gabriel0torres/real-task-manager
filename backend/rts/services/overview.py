@@ -106,10 +106,11 @@ def upcoming_runs(session: Session, default_tz: str, limit: int = 10) -> list[di
     ).all()
     items = []
     for t in tasks:
-        if not t.cron_expressions or not t.is_effectively_active:
+        schedule = t.effective_schedule
+        if not schedule or not t.is_effectively_active:
             continue
         try:
-            fires = next_fire_times(t.cron_expressions, t.timezone or default_tz, 3)
+            fires = next_fire_times(list(schedule.expressions), schedule.tz(default_tz), 3)
         except CronError:
             continue
         items.extend(

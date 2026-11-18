@@ -5,8 +5,9 @@ import { useRunTask } from "../../api/hooks";
 import type { Task } from "../../api/types";
 import { ActiveBadge } from "../../components/StatusBadge";
 import { useToast } from "../../components/Toast";
-import { Button } from "../../components/ui";
+import { Button, cx } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { SCHEDULE_SOURCE_LABELS } from "../../lib/schedule";
 
 export function TaskTable({ tasks }: { tasks: Task[] }) {
   const run = useRunTask();
@@ -42,7 +43,17 @@ export function TaskTable({ tasks }: { tasks: Task[] }) {
                   {task.name}
                 </Link>
               </td>
-              <td className="py-2 pr-3 text-slate-600">{task.schedule_description}</td>
+              <td className="py-2 pr-3 text-slate-600">
+                {task.schedule_description}
+                <span
+                  className={cx(
+                    "block text-xs",
+                    task.schedule_source === "none" ? "text-amber-700" : "text-slate-400",
+                  )}
+                >
+                  {SCHEDULE_SOURCE_LABELS[task.schedule_source]}
+                </span>
+              </td>
               <td className="py-2 pr-3 text-slate-600" title={formatDateTime(task.next_run_at)}>
                 {task.next_run_at ? formatRelative(task.next_run_at) : "—"}
               </td>

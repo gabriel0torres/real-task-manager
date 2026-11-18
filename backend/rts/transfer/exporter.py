@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from rts import __version__
-from rts.models import Group, Subcategory, Task, Variable, VariableScope
+from rts.models import Group, ScheduleMode, Subcategory, Task, Variable, VariableScope
 from rts.scheduling.cron import CronError
 from rts.scheduling.describe import describe
 from rts.security.crypto import SecretBox
@@ -21,6 +21,23 @@ from rts.transfer.crypto import ExportCipher
 from rts.transfer.format import SCHEMA_VERSION, Scope, SecretsMode, dump_document
 
 SCOPE_LABELS = {"system": "sistema inteiro", "group": "grupo", "subcategory": "subcategoria"}
+INHERITED_FROM = {"subcategory": "da subcategoria", "group": "do grupo"}
+
+
+def _describe(expressions) -> str | None:
+    try:
+        return describe(list(expressions))
+    except CronError:
+        return None
+
+
+def _owner_schedule(crons: list[str], timezone: str | None, note: str = "") -> dict:
+    description = _describe(crons)
+    return {
+        "cron": list(crons),
+        "timezone": timezone,
+        "description": f"{description}{note}" if description else None,
+    }
 
 
 @dataclass
@@ -36,6 +53,8 @@ class _Writer:
         self.box = box
         self.cipher = cipher
         self.secrets_total = 0
+        # Version 2 is only needed for inherited schedules (see rts.transfer.format).
+        self.needs_v2 = False
 
     def variables(self, scope: VariableScope, owner_id: int | None) -> list[dict]:
         stmt = select(Variable).where(Variable.scope == scope)
@@ -63,11 +82,29 @@ class _Writer:
             out.append(item)
         return out
 
+    def schedule(self, task: Task) -> dict:
+        if task.schedule_mode is ScheduleMode.INHERIT:
+            self.needs_v2 = True
+            effective = task.effective_schedule
+            if effective:
+                description = f"herdado {INHERITED_FROM[effective.source]}: " + (
+                    _describe(effective.expressions) or "agendamento inválido"
+                )
+            else:
+                description = "herdado, mas a subcategoria e o grupo não têm agendamento"
+            # cron/timezone: the task's own schedule, kept for when it stops inheriting.
+            return {
+                "mode": ScheduleMode.INHERIT.value,
+                "cron": list(task.cron_expressions),
+                "timezone": task.timezone,
+                "description": description,
+            }
+        if task.schedule_mode is ScheduleMode.MANUAL:
+            # An empty schedule already means "manual" in version 1.
+            return {"cron": [], "timezone": task.timezone, "description": _describe([])}
+        return _owner_schedule(task.cron_expressions, task.timezone)
+
     def task(self, task: Task) -> dict:
-        try:
-            description = describe(task.cron_expressions)
-        except CronError:
-            description = None
         data = {
             "name": task.name,
             "description": task.description,
@@ -75,11 +112,7 @@ class _Writer:
             "shell": task.shell.value if task.shell else None,
             "working_dir": task.working_dir,
             "active": task.is_active,
-            "schedule": {
-                "cron": list(task.cron_expressions),
-                "timezone": task.timezone,
-                "description": description,
-            },
+            "schedule": self.schedule(task),
             "timeout_seconds": task.timeout_seconds,
             "retries": {"max": task.max_retries, "interval_seconds": task.retry_interval_seconds},
             "overlap_policy": task.overlap_policy.value,
@@ -88,25 +121,41 @@ class _Writer:
         }
         return data
 
-    def subcategory(self, sub: Subcategory) -> dict:
+    def subcategory(self, sub: Subcategory, standalone: bool = False) -> dict:
         tasks = sorted(sub.tasks, key=lambda t: t.name.lower())
-        return {
+        data: dict = {
             "name": sub.name,
             "description": sub.description,
             "active": sub.is_active,
             "variables": self.variables(VariableScope.SUBCATEGORY, sub.id),
-            "tasks": [self.task(t) for t in tasks],
         }
+        if sub.cron_expressions:
+            data["schedule"] = _owner_schedule(sub.cron_expressions, sub.timezone)
+        elif standalone and sub.group.cron_expressions:
+            # Exported without its group: carry the group's schedule, so tasks that
+            # inherit it keep the same schedule wherever the file is imported.
+            group = sub.group
+            data["schedule"] = _owner_schedule(
+                group.cron_expressions, group.timezone, f" (do grupo {group.name})"
+            )
+        if "schedule" in data:
+            self.needs_v2 = True
+        data["tasks"] = [self.task(t) for t in tasks]
+        return data
 
     def group(self, group: Group, only: Subcategory | None = None) -> dict:
         subs = [only] if only else sorted(group.subcategories, key=lambda s: s.name.lower())
-        return {
+        data: dict = {
             "name": group.name,
             "description": group.description,
             "active": group.is_active,
             "variables": [] if only else self.variables(VariableScope.GROUP, group.id),
-            "subcategories": [self.subcategory(s) for s in subs],
         }
+        if not only and group.cron_expressions:
+            self.needs_v2 = True
+            data["schedule"] = _owner_schedule(group.cron_expressions, group.timezone)
+        data["subcategories"] = [self.subcategory(s, standalone=only is not None) for s in subs]
+        return data
 
 
 def _slug(text: str) -> str:
@@ -134,7 +183,7 @@ def export_config(
     now = (now or datetime.now(UTC)).replace(microsecond=0)
 
     doc: dict = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": 1,  # raised below if the content needs a newer version
         "rts_version": __version__,
         "exported_at": now.isoformat().replace("+00:00", "Z"),
         "scope": scope,
@@ -161,6 +210,9 @@ def export_config(
         sub = get_subcategory(session, target_id)
         doc["groups"] = [writer.group(sub.group, only=sub)]
         label = f"{sub.group.name}-{sub.name}"
+
+    if writer.needs_v2:
+        doc["schema_version"] = SCHEMA_VERSION
 
     secrets_note = {
         "omit": "segredos exportados SEM valor (a preencher na importação)",

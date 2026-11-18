@@ -10,6 +10,7 @@ import {
   useTask,
   useUpdateTask,
 } from "../api/hooks";
+import type { Group, Subcategory, Task } from "../api/types";
 import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, cx, ErrorBox, PageHeader, Spinner } from "../components/ui";
@@ -29,6 +30,44 @@ const TABS = [
   { id: "runs", label: "Execuções" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
+
+function ScheduleOrigin({ task, sub, group }: { task: Task; sub?: Subcategory; group?: Group }) {
+  const link = "text-indigo-600 hover:underline";
+  switch (task.schedule_source) {
+    case "task":
+      return <>Próprio</>;
+    case "manual":
+      return <>Somente manual</>;
+    case "subcategory":
+      return (
+        <>
+          Herdado da subcategoria{" "}
+          {sub ? (
+            <Link to={`/subcategories/${sub.id}`} className={link}>
+              {sub.name}
+            </Link>
+          ) : null}
+        </>
+      );
+    case "group":
+      return (
+        <>
+          Herdado do grupo{" "}
+          {group ? (
+            <Link to={`/groups/${group.id}`} className={link}>
+              {group.name}
+            </Link>
+          ) : null}
+        </>
+      );
+    case "none":
+      return (
+        <span className="text-amber-700">
+          Herda, mas nem a subcategoria nem o grupo têm agendamento (só execução manual)
+        </span>
+      );
+  }
+}
 
 function Info({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -155,6 +194,9 @@ export function TaskPage() {
           <Card title="Agendamento">
             <dl className="grid gap-4 md:grid-cols-3">
               <Info label="Quando">{task.schedule_description}</Info>
+              <Info label="Origem">
+                <ScheduleOrigin task={task} sub={sub} group={group} />
+              </Info>
               <Info label="Próxima execução">
                 {task.next_run_at ? (
                   <>
@@ -169,12 +211,23 @@ export function TaskPage() {
               </Info>
               <Info label="Fuso horário">
                 {task.effective_timezone}
-                {!task.timezone && <span className="text-slate-500"> (padrão)</span>}
+                {task.schedule_source === "task" && !task.timezone && (
+                  <span className="text-slate-500"> (padrão)</span>
+                )}
               </Info>
               <Info label="Expressões cron">
-                <span className="font-mono text-xs">{task.cron_expressions.join(" | ") || "—"}</span>
+                <span className="font-mono text-xs">
+                  {task.effective_cron_expressions.join(" | ") || "—"}
+                </span>
               </Info>
             </dl>
+            {task.schedule_source === "task" && sub && sub.inherited_schedule.source !== "none" && (
+              <p className="mt-3 text-xs text-slate-500">
+                {sub.inherited_schedule.source === "subcategory" ? "A subcategoria" : "O grupo"} roda{" "}
+                <span className="font-medium">{sub.inherited_schedule.description.toLowerCase()}</span>;
+                esta tarefa usa um horário próprio.
+              </p>
+            )}
           </Card>
           <Card title="Comando">
             <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 font-mono text-xs text-slate-100">

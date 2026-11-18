@@ -10,6 +10,7 @@ import type {
   RunPage,
   RunStatus,
   SchedulePreview,
+  ScheduleOwner,
   Subcategory,
   SystemInfo,
   Task,
@@ -63,6 +64,13 @@ export const useTasks = (subcategoryId?: number) =>
     queryKey: ["tasks", { subcategoryId }],
     queryFn: () => api.get<Task[]>(`/tasks${query({ subcategory_id: subcategoryId })}`),
     refetchInterval: 15_000,
+  });
+
+export const useGroupTasks = (groupId: number) =>
+  useQuery({
+    queryKey: ["tasks", { groupId }],
+    queryFn: () => api.get<Task[]>(`/tasks${query({ group_id: groupId })}`),
+    enabled: groupId > 0,
   });
 
 export const useTask = (id: number) =>
@@ -161,6 +169,7 @@ function useApiMutation<TVars, TResult>(fn: (vars: TVars) => Promise<TResult>) {
 
 export type GroupInput = Pick<Group, "name" | "description" | "is_active">;
 export type SubcategoryInput = Pick<Subcategory, "group_id" | "name" | "description" | "is_active">;
+export type ScheduleInput = Pick<ScheduleOwner, "cron_expressions" | "timezone">;
 export interface VariableInput {
   scope: VariableScope;
   owner_id: number | null;
@@ -173,7 +182,7 @@ export interface VariableInput {
 export const useCreateGroup = () =>
   useApiMutation((data: GroupInput) => api.post<Group>("/groups", data));
 export const useUpdateGroup = () =>
-  useApiMutation(({ id, ...data }: Partial<GroupInput> & { id: number }) =>
+  useApiMutation(({ id, ...data }: Partial<GroupInput & ScheduleInput> & { id: number }) =>
     api.patch<Group>(`/groups/${id}`, data),
   );
 export const useDeleteGroup = () => useApiMutation((id: number) => api.del(`/groups/${id}`));
@@ -181,7 +190,7 @@ export const useDeleteGroup = () => useApiMutation((id: number) => api.del(`/gro
 export const useCreateSubcategory = () =>
   useApiMutation((data: SubcategoryInput) => api.post<Subcategory>("/subcategories", data));
 export const useUpdateSubcategory = () =>
-  useApiMutation(({ id, ...data }: Partial<SubcategoryInput> & { id: number }) =>
+  useApiMutation(({ id, ...data }: Partial<SubcategoryInput & ScheduleInput> & { id: number }) =>
     api.patch<Subcategory>(`/subcategories/${id}`, data),
   );
 export const useDeleteSubcategory = () =>

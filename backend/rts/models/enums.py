@@ -32,6 +32,14 @@ class MisfirePolicy(StrEnum):
     IGNORE = "ignore"
 
 
+class ScheduleMode(StrEnum):
+    """Where a task's schedule comes from."""
+
+    OWN = "own"  # the task's own cron expressions
+    INHERIT = "inherit"  # its subcategory's schedule, else its group's
+    MANUAL = "manual"  # never fires on a schedule
+
+
 class Shell(StrEnum):
     BASH = "bash"
     SH = "sh"

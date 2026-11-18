@@ -1,5 +1,5 @@
 import { AlertCircle, CalendarClock, Plus, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { previewSchedule } from "../../api/hooks";
 import type { SchedulePreview } from "../../api/types";
@@ -127,14 +127,21 @@ function usePreview(expressions: string[], timezone: string | null) {
   return state;
 }
 
-function SchedulePreviewPanel({ expressions, timezone }: { expressions: string[]; timezone: string | null }) {
+const TASK_NONE_MESSAGE = "Sem agendamento: a tarefa só roda com “Executar agora” ou via API.";
+
+/** Description and next runs of a schedule (computed by the server). */
+export function SchedulePreviewPanel({
+  expressions,
+  timezone,
+  emptyMessage = TASK_NONE_MESSAGE,
+}: {
+  expressions: string[];
+  timezone: string | null;
+  emptyMessage?: ReactNode;
+}) {
   const { loading, data, error } = usePreview(expressions, timezone);
   if (!expressions.length) {
-    return (
-      <p className="text-sm text-slate-500">
-        Sem agendamento: a tarefa só roda com “Executar agora” ou via API.
-      </p>
-    );
+    return <p className="text-sm text-slate-500">{emptyMessage}</p>;
   }
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (data && !data.valid) {
@@ -169,14 +176,30 @@ export function ScheduleBuilder({
   value,
   onChange,
   timezone,
+  noneLabel = "Somente manual",
+  noneMessage = "A tarefa não terá execuções agendadas.",
+  emptyPreview = TASK_NONE_MESSAGE,
+  allowNone = true,
 }: {
   value: string[];
   /** ``problem`` is a pt-BR message when the visual selection is incomplete. */
   onChange: (expressions: string[], problem: string | null) => void;
   timezone: string | null;
+  /** Label of the "no schedule" option (e.g. "Sem agendamento padrão"). */
+  noneLabel?: string;
+  noneMessage?: ReactNode;
+  emptyPreview?: ReactNode;
+  /** false: no "no schedule" option (an empty value starts as daily at 08:00). */
+  allowNone?: boolean;
 }) {
   // Initialised once from the stored cron; afterwards the model is the source of truth.
-  const [model, setModel] = useState<ScheduleModel>(() => fromCron(value));
+  const [model, setModel] = useState<ScheduleModel>(() => {
+    const initial = fromCron(value);
+    return !allowNone && initial.mode === "none" ? defaultModel("daily") : initial;
+  });
+  const modes = MODES.filter(({ mode }) => allowNone || mode !== "none").map((m) =>
+    m.mode === "none" ? { ...m, label: noneLabel } : m,
+  );
   const update = (next: ScheduleModel) => {
     setModel(next);
     onChange(toCron(next), modelProblem(next));
@@ -186,7 +209,7 @@ export function ScheduleBuilder({
   return (
     <div className="space-y-4">
       <div role="radiogroup" aria-label="Tipo de agendamento" className="flex flex-wrap gap-1.5">
-        {MODES.map(({ mode, label }) => (
+        {modes.map(({ mode, label }) => (
           <button
             key={mode}
             type="button"
@@ -338,13 +361,11 @@ export function ScheduleBuilder({
           </div>
         )}
 
-        {model.mode === "none" && (
-          <p className="text-sm text-slate-600">A tarefa não terá execuções agendadas.</p>
-        )}
+        {model.mode === "none" && <p className="text-sm text-slate-600">{noneMessage}</p>}
       </div>
 
       <div className="rounded-md border border-dashed border-slate-300 p-3">
-        <SchedulePreviewPanel expressions={expressions} timezone={timezone} />
+        <SchedulePreviewPanel expressions={expressions} timezone={timezone} emptyMessage={emptyPreview} />
         {model.mode !== "advanced" && expressions.length > 0 && (
           <p className="mt-2 font-mono text-xs text-slate-400" title="Expressão cron gerada">
             cron: {expressions.join(" | ")}

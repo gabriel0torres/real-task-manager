@@ -8,13 +8,16 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from rts.models import Group, Subcategory, Task
+from rts.models import EffectiveSchedule, Group, ScheduleMode, Subcategory, Task
 from rts.scheduling.cron import CronError, next_fire_times
 from rts.scheduling.describe import describe
 from rts.schemas.hierarchy import (
     GroupCreate,
+    GroupOut,
     GroupUpdate,
+    InheritedScheduleOut,
     SubcategoryCreate,
+    SubcategoryOut,
     SubcategoryUpdate,
     TaskCreate,
     TaskOut,
@@ -24,6 +27,11 @@ from rts.services.errors import ConflictError, InvalidInputError, NotFoundError
 from rts.services.settings import bump_config_revision
 
 TASK_NULLABLE_FIELDS = {"shell", "working_dir", "timezone", "timeout_seconds"}
+OWNER_NULLABLE_FIELDS = {"timezone"}
+OWN_SCHEDULE_REQUIRED = (
+    "Informe pelo menos uma expressão cron para o agendamento próprio "
+    "(ou escolha herdar ou somente manual)."
+)
 
 
 def _apply(obj: Any, changes: dict[str, Any], nullable: set[str] = frozenset()) -> None:
@@ -67,7 +75,7 @@ def update_group(session: Session, group_id: int, data: GroupUpdate) -> Group:
     changes = data.model_dump(exclude_unset=True)
     if "name" in changes and changes["name"] is not None:
         _ensure_group_name_free(session, changes["name"], exclude_id=group.id)
-    _apply(group, changes)
+    _apply(group, changes, OWNER_NULLABLE_FIELDS)
     bump_config_revision(session)
     session.flush()
     return group
@@ -127,7 +135,7 @@ def update_subcategory(
     target_name = changes.get("name") or sub.name
     if "name" in changes or "group_id" in changes:
         _ensure_subcategory_name_free(session, target_group, target_name, exclude_id=sub.id)
-    _apply(sub, changes)
+    _apply(sub, changes, OWNER_NULLABLE_FIELDS)
     bump_config_revision(session)
     session.flush()
     session.refresh(sub)
@@ -171,10 +179,20 @@ def _ensure_task_name_free(
         raise ConflictError(f"Já existe uma tarefa '{name}' nesta subcategoria.")
 
 
+def _default_mode(crons: list[str]) -> ScheduleMode:
+    """Without an explicit mode (API clients from before schedule modes existed),
+    a schedule means "own" and an empty one means "manual", as it always did."""
+    return ScheduleMode.OWN if crons else ScheduleMode.MANUAL
+
+
 def create_task(session: Session, data: TaskCreate) -> Task:
     get_subcategory(session, data.subcategory_id)
     _ensure_task_name_free(session, data.subcategory_id, data.name)
-    task = Task(**data.model_dump())
+    values = data.model_dump()
+    values["schedule_mode"] = values["schedule_mode"] or _default_mode(values["cron_expressions"])
+    if values["schedule_mode"] is ScheduleMode.OWN and not values["cron_expressions"]:
+        raise InvalidInputError(OWN_SCHEDULE_REQUIRED)
+    task = Task(**values)
     session.add(task)
     bump_config_revision(session)
     session.flush()
@@ -194,7 +212,13 @@ def update_task(session: Session, task_id: int, data: TaskUpdate) -> Task:
             changes.get("name") or task.name,
             exclude_id=task.id,
         )
+    if changes.get("schedule_mode") is None:
+        changes.pop("schedule_mode", None)
+        if changes.get("cron_expressions") is not None:
+            changes["schedule_mode"] = _default_mode(changes["cron_expressions"])
     _apply(task, changes, TASK_NULLABLE_FIELDS)
+    if task.schedule_mode is ScheduleMode.OWN and not task.cron_expressions:
+        raise InvalidInputError(OWN_SCHEDULE_REQUIRED)
     bump_config_revision(session)
     session.flush()
     session.refresh(task)
@@ -207,32 +231,66 @@ def delete_task(session: Session, task_id: int) -> None:
     session.flush()
 
 
-def task_next_run(task: Task, timezone: str, now: datetime | None = None) -> datetime | None:
-    if not task.cron_expressions or not task.is_effectively_active:
+def next_run(schedule: EffectiveSchedule, timezone: str, now: datetime | None = None):
+    if not schedule:
         return None
     try:
-        runs = next_fire_times(task.cron_expressions, timezone, 1, now)
+        runs = next_fire_times(list(schedule.expressions), timezone, 1, now)
     except CronError:
         return None
     return runs[0] if runs else None
 
 
-def _safe_describe(expressions: list[str]) -> str:
+def task_next_run(task: Task, default_timezone: str, now: datetime | None = None):
+    if not task.is_effectively_active:
+        return None
+    schedule = task.effective_schedule
+    return next_run(schedule, schedule.tz(default_timezone), now)
+
+
+def _safe_describe(expressions) -> str:
     try:
-        return describe(expressions)
+        return describe(list(expressions))
     except CronError:
         return "Agendamento inválido"
 
 
+def group_to_out(group: Group) -> GroupOut:
+    return GroupOut.model_validate(
+        {
+            **{c: getattr(group, c) for c in GroupOut.model_fields if hasattr(group, c)},
+            "schedule_description": _safe_describe(group.cron_expressions),
+        }
+    )
+
+
+def subcategory_to_out(sub: Subcategory) -> SubcategoryOut:
+    inherited = sub.inherited_schedule
+    return SubcategoryOut.model_validate(
+        {
+            **{c: getattr(sub, c) for c in SubcategoryOut.model_fields if hasattr(sub, c)},
+            "schedule_description": _safe_describe(sub.cron_expressions),
+            "inherited_schedule": InheritedScheduleOut(
+                source=inherited.source,
+                cron_expressions=list(inherited.expressions),
+                timezone=inherited.timezone,
+                description=_safe_describe(inherited.expressions),
+            ),
+        }
+    )
+
+
 def task_to_out(task: Task, default_timezone: str) -> TaskOut:
-    effective_tz = task.timezone or default_timezone
+    schedule = task.effective_schedule
     return TaskOut.model_validate(
         {
             **{c: getattr(task, c) for c in TaskOut.model_fields if hasattr(task, c)},
             "group_id": task.subcategory.group_id,
-            "schedule_description": _safe_describe(task.cron_expressions),
-            "effective_timezone": effective_tz,
+            "schedule_source": schedule.source,
+            "effective_cron_expressions": list(schedule.expressions),
+            "schedule_description": _safe_describe(schedule.expressions),
+            "effective_timezone": schedule.tz(default_timezone),
             "is_effectively_active": task.is_effectively_active,
-            "next_run_at": task_next_run(task, effective_tz),
+            "next_run_at": task_next_run(task, default_timezone),
         }
     )

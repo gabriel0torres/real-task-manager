@@ -1,9 +1,9 @@
-"""The export file format (schema_version 1).
+"""The export file format (schema_version 1 and 2).
 
 Layout::
 
-    schema_version: 1
-    rts_version: 0.1.0
+    schema_version: 2
+    rts_version: 0.3.0
     exported_at: 2026-11-17T12:00:00Z
     scope: system | group | subcategory
     secrets_mode: omit | encrypted
@@ -12,19 +12,27 @@ Layout::
     variables: [...]                                     # global variables (system only)
     groups:
       - name, description, active, variables
+        schedule: {cron: [...], timezone, description}   # v2, optional
         subcategories:
           - name, description, active, variables
+            schedule: {cron: [...], timezone, description}   # v2, optional
             tasks:
               - name, description, command, shell, working_dir, active,
-                schedule: {cron: [...], timezone, description}
+                schedule: {mode, cron: [...], timezone, description}
                 timeout_seconds, retries: {max, interval_seconds},
                 overlap_policy, misfire_policy, variables
+
+Version 2 adds inherited schedules: an optional ``schedule`` on groups and
+subcategories, and ``mode`` (own | inherit | manual) on task schedules. Without
+``mode`` a task schedule means what it did in version 1: ``own`` when it has cron
+expressions, ``manual`` otherwise. Exports only use version 2 when they need it,
+so files without inherited schedules still import into older installations.
 
 Variable: {key, value | value_encrypted, secret, description}. A secret exported
 without value has ``value: null`` ("a preencher").
 
 For a ``subcategory`` export the single group is only a container: it carries
-the group name (to find/create it on import) but no group variables.
+the group name (to find/create it on import) but no group variables nor schedule.
 """
 
 from __future__ import annotations
@@ -35,12 +43,12 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from rts.models.enums import MisfirePolicy, OverlapPolicy, Shell
+from rts.models.enums import MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
 from rts.schemas.common import NameStr
 from rts.schemas.hierarchy import MAX_TIMEOUT_SECONDS, _normalize_crons, _validate_tz
 from rts.schemas.variables import MAX_VALUE_LENGTH, validate_key
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # newest version this installation reads and writes
 MAX_FILE_BYTES = 5_000_000
 
 Scope = Literal["system", "group", "subcategory"]
@@ -91,6 +99,22 @@ class ScheduleDoc(_Strict):
         return _validate_tz(v)
 
 
+class TaskScheduleDoc(ScheduleDoc):
+    mode: ScheduleMode | None = None
+
+    @model_validator(mode="after")
+    def _own_needs_cron(self):
+        if self.mode is ScheduleMode.OWN and not self.cron:
+            raise ValueError("o modo 'own' exige pelo menos uma expressão cron")
+        return self
+
+    @property
+    def effective_mode(self) -> ScheduleMode:
+        if self.mode is not None:
+            return self.mode
+        return ScheduleMode.OWN if self.cron else ScheduleMode.MANUAL
+
+
 class RetriesDoc(_Strict):
     max: int = Field(default=0, ge=0, le=100)
     interval_seconds: int = Field(default=60, ge=0, le=86_400)
@@ -124,7 +148,7 @@ class TaskDoc(_WithVariables):
     shell: Shell | None = None
     working_dir: str | None = None
     active: bool = True
-    schedule: ScheduleDoc = Field(default_factory=ScheduleDoc)
+    schedule: TaskScheduleDoc = Field(default_factory=TaskScheduleDoc)
     timeout_seconds: int | None = Field(default=None, ge=1, le=MAX_TIMEOUT_SECONDS)
     retries: RetriesDoc = Field(default_factory=RetriesDoc)
     overlap_policy: OverlapPolicy = OverlapPolicy.SKIP
@@ -142,6 +166,7 @@ class SubcategoryDoc(_WithVariables):
     name: NameStr
     description: str = ""
     active: bool = True
+    schedule: ScheduleDoc | None = None
     tasks: list[TaskDoc] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -154,6 +179,7 @@ class GroupDoc(_WithVariables):
     name: NameStr
     description: str = ""
     active: bool = True
+    schedule: ScheduleDoc | None = None
     subcategories: list[SubcategoryDoc] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -208,6 +234,8 @@ class ExportDoc(_WithVariables):
                 raise ValueError("exportação 'subcategory' deve conter exatamente 1 subcategoria")
             if group.variables:
                 raise ValueError("exportação 'subcategory' não inclui variáveis do grupo")
+            if group.schedule is not None:
+                raise ValueError("exportação 'subcategory' não inclui o agendamento do grupo")
         _unique([g.name for g in self.groups], "grupo")
         return self
 

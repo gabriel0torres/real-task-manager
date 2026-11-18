@@ -6,6 +6,8 @@ import {
   useCreateGroup,
   useDeleteGroup,
   useGroup,
+  useGroupTasks,
+  useSettings,
   useSubcategories,
   useUpdateGroup,
 } from "../api/hooks";
@@ -14,6 +16,7 @@ import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
 import { GroupNotifications } from "../features/notifications/GroupNotifications";
+import { DefaultScheduleCard } from "../features/schedule/DefaultScheduleCard";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
 
@@ -50,6 +53,8 @@ export function GroupPage() {
   const toast = useToast();
   const { data: group, isLoading, error } = useGroup(groupId);
   const { data: subcategories } = useSubcategories(groupId);
+  const { data: tasks } = useGroupTasks(groupId);
+  const { data: settings } = useSettings();
   const update = useUpdateGroup();
   const remove = useDeleteGroup();
   const [editing, setEditing] = useState(false);
@@ -57,6 +62,12 @@ export function GroupPage() {
 
   if (isLoading) return <Spinner />;
   if (error || !group) return <ErrorBox error={error ?? "Grupo não encontrado."} />;
+
+  // Inheriting tasks follow the group's schedule only when their subcategory has none.
+  const subsWithSchedule = new Set(
+    (subcategories ?? []).filter((s) => s.cron_expressions.length > 0).map((s) => s.id),
+  );
+  const inheriting = (tasks ?? []).filter((t) => t.schedule_mode === "inherit");
 
   const togglePause = () =>
     update.mutate(
@@ -138,6 +149,30 @@ export function GroupPage() {
           </Card>
         )}
 
+        {settings && tasks && subcategories && (
+          <DefaultScheduleCard
+            kind="group"
+            owner={group}
+            affected={inheriting.filter((t) => !subsWithSchedule.has(t.subcategory_id))}
+            followSubcategory={inheriting.filter((t) => subsWithSchedule.has(t.subcategory_id))}
+            ownSchedule={tasks.filter((t) => t.schedule_mode === "own")}
+            defaultTimezone={settings.default_timezone}
+            busy={update.isPending}
+            onSave={(schedule, done) =>
+              update.mutate(
+                { id: group.id, ...schedule },
+                {
+                  onSuccess: () => {
+                    toast.success("Agendamento padrão do grupo salvo.");
+                    done();
+                  },
+                  onError: toast.error,
+                },
+              )
+            }
+          />
+        )}
+
         <Card
           title="Subcategorias"
           actions={
@@ -156,6 +191,11 @@ export function GroupPage() {
                   <Layers className="size-4 shrink-0 text-slate-400" />
                   <span className="truncate">{sub.name}</span>
                   {sub.description && <span className="truncate font-normal text-slate-500">— {sub.description}</span>}
+                  {sub.cron_expressions.length > 0 && (
+                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-600">
+                      {sub.schedule_description}
+                    </span>
+                  )}
                 </Link>
                 <ActiveBadge active={sub.is_active} effective={sub.is_effectively_active} />
               </li>
