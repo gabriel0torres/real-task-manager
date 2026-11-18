@@ -79,7 +79,7 @@ Comandos úteis (`rts.cmd` fica na pasta de instalação):
 Stop-ScheduledTask "RTS API"; Start-ScheduledTask "RTS API"   # reiniciar a API
 ```
 
-Desinstalar: `Unregister-ScheduledTask "RTS API","RTS Worker"` e apague `C:\ProgramData\RTS`
+Desinstalar: `Unregister-ScheduledTask "RTS API","RTS Worker","RTS Update"` e apague `C:\ProgramData\RTS`
 (guarde antes `data\` e `.env` se quiser manter os dados).
 
 ### Linux
@@ -114,8 +114,21 @@ Debian 11+, RHEL/Rocky/Alma 9+). Em sistemas mais antigos, use o modo Python ou 
 
 ### Atualizar
 
-Rode o mesmo comando de instalação de novo: o programa é substituído e a configuração (`.env`)
-e os dados (`data/`) são mantidos; as migrations do banco são aplicadas sozinhas.
+O RTS verifica a cada 12 horas se há uma versão nova publicada no GitHub. Quando há, aparece
+**“Nova versão vX.Y.Z”** no topo da tela (para quem administra as configurações) e a aba
+**Configurações → Atualizações** mostra a versão instalada, a nova e as notas da versão.
+
+- Instalações feitas pelos instaladores com o serviço registrado têm o botão **Atualizar**: um
+  atualizador separado (a tarefa agendada `RTS Update` no Windows; a unidade systemd
+  `rts-update.path` no Linux) para o RTS, copia o banco para `data/backups/`, roda o instalador da
+  nova versão e reinicia tudo. A página recarrega sozinha quando a nova versão responder.
+  Execuções em andamento são interrompidas (a tela avisa quantas). O registro fica em
+  `data/update.log`.
+- Sem serviço registrado, Docker ou código-fonte: a aba mostra os comandos para atualizar. Pelos
+  instaladores, basta rodar o mesmo comando de instalação de novo — o programa é substituído e a
+  configuração (`.env`) e os dados (`data/`) são mantidos; as migrations do banco são aplicadas
+  sozinhas.
+- Servidores sem acesso à internet: defina `RTS_UPDATE_CHECK=false` no `.env`.
 
 ### Observações
 
@@ -263,6 +276,9 @@ Todas começam com `RTS_`. Veja também [.env.example](.env.example).
 | `RTS_AUTO_MIGRATE` | `true` | Aplica as migrations ao iniciar |
 | `RTS_FRONTEND_DIR` | `frontend/dist` | Interface compilada servida pela API |
 | `RTS_LOG_LEVEL` | `INFO` | Nível de log |
+| `RTS_UPDATE_CHECK` | `true` | Verifica no GitHub se há versão nova (a cada 12 h) |
+| `RTS_UPDATE_REPO` | `gabriel0torres/real-task-manager` | Repositório consultado para novas versões |
+| `RTS_INSTALL_TYPE`, `RTS_UPDATER` | definidos pelos instaladores | Tipo de instalação e atualizador disponível (não altere) |
 
 > Atrás de um proxy reverso com HTTPS (nginx, Traefik, Caddy), defina `RTS_COOKIE_SECURE=true`
 > e `RTS_PUBLIC_URL`. O log ao vivo usa Server-Sent Events: desative o buffering do proxy para

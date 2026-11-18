@@ -13,6 +13,7 @@ import { ChannelsForm } from "../features/notifications/ChannelsForm";
 import { RuleForm } from "../features/notifications/RuleForm";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { ImportWizard } from "../features/transfer/ImportWizard";
+import { UpdatesPanel } from "../features/updates/UpdatesPanel";
 import { listTimeZones } from "../lib/format";
 
 const TIME_ZONES = listTimeZones();
@@ -22,6 +23,7 @@ const TABS = [
   { id: "notifications", label: "Notificações" },
   { id: "tokens", label: "Tokens de API" },
   { id: "transfer", label: "Exportar / Importar" },
+  { id: "updates", label: "Atualizações" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -212,6 +214,7 @@ export function SettingsPage() {
         </Card>
       )}
       {tab === "transfer" && <TransferTab />}
+      {tab === "updates" && <UpdatesPanel />}
     </>
   );
 }

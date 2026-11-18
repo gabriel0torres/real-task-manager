@@ -16,7 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     RTS_DATA_DIR=/data \
-    RTS_FRONTEND_DIR=/app/frontend/dist
+    RTS_FRONTEND_DIR=/app/frontend/dist \
+    RTS_INSTALL_TYPE=docker
 
 # tini forwards signals and reaps zombies (task processes run as children).
 RUN apt-get update \

@@ -157,6 +157,68 @@ RTS_DEFAULT_TIMEZONE=America/Sao_Paulo
     Info "Mantendo a configuração existente em $EnvFile"
 }
 
+function Set-EnvValue([string] $key, [string] $value) {
+    # Replace (or append) "KEY=value" in .env, keeping everything else as is.
+    $lines = @(Get-Content -Path $EnvFile -Encoding UTF8 | Where-Object { $_ -notmatch "^$key=" })
+    if ($value) { $lines += "$key=$value" }
+    [IO.File]::WriteAllText($EnvFile, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
+}
+Set-EnvValue "RTS_INSTALL_TYPE" $Mode
+
+# Updater used by "Atualizar" in the web interface. It runs from the scheduled task
+# "RTS Update" (outside the RTS processes, which it stops), backs up the database and
+# runs the installer of the requested version.
+$updater = @'
+# Atualizador do Real Task Scheduler - iniciado pela tarefa agendada "RTS Update".
+$ErrorActionPreference = "Continue"
+$ProgressPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$InstallDir = $PSScriptRoot
+$Data = Join-Path $InstallDir "data"
+$RequestFile = Join-Path $Data "update-request.json"
+$ResultFile = Join-Path $Data "update-result.json"
+if (-not (Test-Path $RequestFile)) { exit 0 }
+$req = Get-Content $RequestFile -Raw | ConvertFrom-Json
+Remove-Item $RequestFile -Force
+
+function Save-Result([bool] $ok, [string] $message) {
+    $json = @{ ok = $ok; version = $req.version; from_version = $req.from_version;
+               finished_at = (Get-Date).ToUniversalTime().ToString("o"); message = $message } | ConvertTo-Json
+    [IO.File]::WriteAllText($ResultFile, $json, (New-Object Text.UTF8Encoding $false))
+}
+
+Start-Transcript -Path (Join-Path $Data "update.log") -Append | Out-Null
+try {
+    Write-Host "Atualizando $($req.from_version) -> $($req.version)"
+    Stop-ScheduledTask "RTS Worker" -ErrorAction SilentlyContinue
+    Stop-ScheduledTask "RTS API" -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    $backups = Join-Path $Data "backups"
+    New-Item -ItemType Directory -Force -Path $backups | Out-Null
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    foreach ($f in "rts.db", "rts.db-wal", "rts.db-shm") {
+        $src = Join-Path $Data $f
+        if (Test-Path $src) { Copy-Item $src (Join-Path $backups ($f -replace "^rts", "rts-$($req.from_version)-$stamp")) }
+    }
+    $mode = ((Get-Content (Join-Path $InstallDir ".env")) -match "^RTS_INSTALL_TYPE=" | Select-Object -First 1) -replace "^RTS_INSTALL_TYPE=", ""
+    if (-not $mode) { $mode = "auto" }
+    $installer = Join-Path $env:TEMP "rts-install-$($req.version).ps1"
+    Invoke-WebRequest "https://github.com/$($req.repo)/releases/download/$($req.version)/install.ps1" -OutFile $installer -UseBasicParsing
+    # Out-Host sends the installer output into the transcript (data\update.log).
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Version $req.version -InstallDir $InstallDir -Mode $mode -Repo $req.repo *>&1 | Out-Host
+    if ($LASTEXITCODE) { throw "o instalador terminou com código $LASTEXITCODE" }
+    Save-Result $true "Atualizado para $($req.version)."
+} catch {
+    Save-Result $false "Falha na atualização: $_ (veja data\update.log)"
+    Start-ScheduledTask "RTS API" -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    Start-ScheduledTask "RTS Worker" -ErrorAction SilentlyContinue
+} finally {
+    Stop-Transcript | Out-Null
+}
+'@
+[IO.File]::WriteAllText((Join-Path $InstallDir "update.ps1"), $updater, (New-Object Text.UTF8Encoding $true))
+
 # Wrapper so "rts.cmd <comando>" always runs with the installation's configuration.
 $wrapper = Join-Path $InstallDir "rts.cmd"
 @"
@@ -197,12 +259,26 @@ if (-not $NoService) {
             Register-ScheduledTask -TaskName $pair[0] -Action $action -Trigger $trigger -Settings $settings `
                 -Principal $principal -Description "Real Task Scheduler ($($pair[1]))" -Force | Out-Null
         }
+        # On-demand updater task (no trigger: started by the API through "schtasks /Run").
+        # Not re-registered while it runs (it is what runs this script during an update).
+        $updateTask = Get-ScheduledTask -TaskName "RTS Update" -ErrorAction SilentlyContinue
+        if (-not $updateTask -or $updateTask.State -ne "Running") {
+            $updateAction = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $InstallDir `
+                -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'update.ps1')`""
+            $updateSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+            Register-ScheduledTask -TaskName "RTS Update" -Action $updateAction -Settings $updateSettings `
+                -Principal $principal -Description "Real Task Scheduler (atualizador)" -Force | Out-Null
+        }
+        # The web interface offers "Atualizar" only when the updater task exists.
+        Set-EnvValue "RTS_UPDATER" "windows-task"
         Start-ScheduledTask -TaskName "RTS API"
         Start-Sleep -Seconds 4
         Start-ScheduledTask -TaskName "RTS Worker"
         $ServiceOk = $true
     }
 }
+if (-not $ServiceOk) { Set-EnvValue "RTS_UPDATER" "" }
 
 # ------------------------------------------------------------------ summary
 $url = "http://localhost:$Port"
@@ -227,4 +303,5 @@ if ($ServiceOk) {
     Write-Host "  Para iniciar:  `"$wrapper`" start"
 }
 Write-Host "  Senha perdida: `"$wrapper`" admin reset-password"
-Write-Host "  Desinstalar:   Unregister-ScheduledTask 'RTS API','RTS Worker'; remova $InstallDir"
+Write-Host "  Atualizar:     pela interface (Configurações > Atualizações) ou rodando este instalador de novo"
+Write-Host "  Desinstalar:   Unregister-ScheduledTask 'RTS API','RTS Worker','RTS Update'; remova $InstallDir"

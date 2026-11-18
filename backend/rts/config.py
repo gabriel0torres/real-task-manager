@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     # Built frontend (Vite "dist") served by the API, if present.
     frontend_dir: Path | None = None
 
+    # New-version check against GitHub Releases (set false for offline servers).
+    update_check: bool = True
+    update_repo: str = "gabriel0torres/real-task-manager"
+    # Written by the installers / Dockerfile: how this copy was installed
+    # (docker | python | standalone) and which updater can apply new versions
+    # (windows-task | systemd-path | systemd-user-path). Empty = manual update.
+    install_type: str | None = None
+    updater: str | None = None
+
     @field_validator("data_dir")
     @classmethod
     def _resolve_data_dir(cls, value: Path) -> Path:

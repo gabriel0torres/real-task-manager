@@ -155,6 +155,63 @@ else
     info "Mantendo a configuração existente em $ENV_FILE"
 fi
 
+set_env_value() {  # KEY VALUE - replace/append a line in .env (empty value removes the key)
+    tmp="$ENV_FILE.tmp"
+    grep -v "^$1=" "$ENV_FILE" > "$tmp" || true
+    if [ -n "$2" ]; then printf '%s=%s\n' "$1" "$2" >> "$tmp"; fi
+    cat "$tmp" > "$ENV_FILE"   # keeps owner and permissions of .env
+    rm -f "$tmp"
+}
+set_env_value RTS_INSTALL_TYPE "$MODE"
+
+# Updater used by "Atualizar" in the web interface: started by rts-update.service when
+# data/update-request.json appears; it stops RTS, backs up the database and runs the
+# installer of the requested version. Written to a temp file and renamed, because a
+# running updater may be reading the current one.
+cat > "$INSTALL_DIR/update.sh.tmp" <<'UPDATER'
+#!/bin/sh
+# Atualizador do Real Task Scheduler (iniciado por rts-update.service).
+DIR="$(cd "$(dirname "$0")" && pwd)"
+DATA="$DIR/data"
+REQ="$DATA/update-request.json"
+RES="$DATA/update-result.json"
+[ -f "$REQ" ] || exit 0
+field() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" "$REQ" | head -n1; }
+VERSION="$(field version)"; FROM="$(field from_version)"; REPO="$(field repo)"
+rm -f "$REQ"
+MODE="$(sed -n 's/^RTS_INSTALL_TYPE=//p' "$DIR/.env" | head -n1)"; [ -n "$MODE" ] || MODE=auto
+if [ "$(id -u)" = 0 ]; then SYSTEMCTL=systemctl; else SYSTEMCTL="systemctl --user"; fi
+result() {
+    printf '{"ok": %s, "version": "%s", "from_version": "%s", "finished_at": "%s", "message": "%s"}\n' \
+        "$1" "$VERSION" "$FROM" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2" > "$RES"
+    chown --reference="$DATA" "$RES" 2>/dev/null || true
+}
+fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; else wget -qO "$2" "$1"; fi; }
+{
+    echo "=== $(date) atualização $FROM -> $VERSION"
+    $SYSTEMCTL stop rts-worker.service rts-api.service
+    STAMP="$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$DATA/backups"
+    for f in rts.db rts.db-wal rts.db-shm; do
+        if [ -f "$DATA/$f" ]; then cp -p "$DATA/$f" "$DATA/backups/$(echo "$f" | sed "s/^rts/rts-$FROM-$STAMP/")"; fi
+    done
+    chown -R --reference="$DATA" "$DATA/backups" 2>/dev/null || true
+    TMP="$(mktemp)"
+    if fetch "https://github.com/$REPO/releases/download/$VERSION/install.sh" "$TMP" \
+        && sh "$TMP" --version "$VERSION" --dir "$DIR" --mode "$MODE" --repo "$REPO"; then
+        result true "Atualizado para $VERSION."
+    else
+        result false "Falha na atualização (veja data/update.log)."
+        $SYSTEMCTL start rts-api.service
+        sleep 3
+        $SYSTEMCTL start rts-worker.service
+    fi
+    rm -f "$TMP"
+} >> "$DATA/update.log" 2>&1
+UPDATER
+chmod +x "$INSTALL_DIR/update.sh.tmp"
+mv -f "$INSTALL_DIR/update.sh.tmp" "$INSTALL_DIR/update.sh"
+
 # Wrapper so "rts <comando>" always runs with the installation's configuration.
 cat > "$INSTALL_DIR/rts" <<EOF
 #!/usr/bin/env sh
@@ -212,7 +269,31 @@ TimeoutStopSec=30
 WantedBy=$WANTED
 EOF
     done
+    # Updater: the path unit starts it when the web interface writes the request file.
+    # As root it runs as root (the RTS itself runs as the unprivileged "rts" user).
+    cat > "$UNIT_DIR/rts-update.service" <<EOF
+[Unit]
+Description=Real Task Scheduler (atualizador)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh $INSTALL_DIR/update.sh
+TimeoutStartSec=1800
+EOF
+    cat > "$UNIT_DIR/rts-update.path" <<EOF
+[Unit]
+Description=Real Task Scheduler (pedido de atualização)
+
+[Path]
+PathExists=$INSTALL_DIR/data/update-request.json
+Unit=rts-update.service
+
+[Install]
+WantedBy=$WANTED
+EOF
+    if [ $IS_ROOT = 1 ]; then set_env_value RTS_UPDATER systemd-path; else set_env_value RTS_UPDATER systemd-user-path; fi
     $SYSTEMCTL daemon-reload
+    $SYSTEMCTL enable --now rts-update.path >/dev/null
     $SYSTEMCTL enable --now rts-api.service >/dev/null
     sleep 3
     $SYSTEMCTL enable --now rts-worker.service >/dev/null
@@ -223,6 +304,7 @@ EOF
 elif [ $SERVICE = 1 ]; then
     warn "systemd não encontrado: inicie manualmente com '$INSTALL_DIR/rts start'."
 fi
+if [ $SERVICE_OK = 0 ]; then set_env_value RTS_UPDATER ""; fi
 
 # ------------------------------------------------------------------ summary
 URL="http://localhost:$PORT"
@@ -247,3 +329,4 @@ else
     echo "  Para iniciar:  $INSTALL_DIR/rts start"
 fi
 echo "  Senha perdida: $INSTALL_DIR/rts admin reset-password"
+echo "  Atualizar:     pela interface (Configurações > Atualizações) ou rodando este instalador de novo"

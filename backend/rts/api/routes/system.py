@@ -26,6 +26,8 @@ from rts.services.settings import (
     get_default_timezone,
     set_setting,
 )
+from rts.services.updates import get_status as get_update_status
+from rts.services.updates import request_update
 
 # Read-only helpers (any logged-in user with "view").
 router = APIRouter()
@@ -185,6 +187,76 @@ class RetentionResult(BaseModel):
 )
 def run_retention(session: SessionDep):
     return RetentionResult(deleted=apply_retention(session, utcnow()))
+
+
+# --------------------------------------------------------------------------- updates
+class UpdateResult(BaseModel):
+    ok: bool | None = None
+    version: str | None = None
+    from_version: str | None = None
+    finished_at: str | None = None
+    message: str | None = None
+
+
+class UpdateStatusOut(BaseModel):
+    current_version: str
+    check_enabled: bool
+    checked_at: str | None
+    error: str | None
+    latest_version: str | None
+    latest_tag: str | None
+    release_url: str | None
+    release_notes: str | None
+    published_at: str | None
+    update_available: bool
+    install_type: str = Field(description="docker | python | standalone | source")
+    can_self_update: bool = Field(description="Há atualizador automático nesta instalação.")
+    update_in_progress: bool
+    last_result: UpdateResult | None
+    instructions: str
+
+
+@router.get(
+    "/system/update",
+    response_model=UpdateStatusOut,
+    tags=["Sistema"],
+    summary="Versão atual e se há versão nova (verifica o GitHub a cada 12 h)",
+)
+def update_status(session: SessionDep, settings: SettingsDep):
+    return get_update_status(session, settings)
+
+
+@settings_router.post(
+    "/settings/update/check",
+    response_model=UpdateStatusOut,
+    summary="Verificar agora se há versão nova",
+)
+def update_check_now(session: SessionDep, settings: SettingsDep):
+    return get_update_status(session, settings, force=True)
+
+
+class UpdateApplyIn(BaseModel):
+    version: str | None = Field(default=None, description="Ex.: v0.2.0. Padrão: a mais nova.")
+
+
+class UpdateApplyOut(BaseModel):
+    version: str
+    from_version: str
+    requested_at: str
+
+
+@settings_router.post(
+    "/settings/update/apply",
+    response_model=UpdateApplyOut,
+    status_code=202,
+    summary="Atualizar o RTS",
+    description=(
+        "Inicia o atualizador da instalação (fora dos processos do RTS). A API e o motor são "
+        "reiniciados; execuções em andamento são interrompidas. Faz backup do banco SQLite antes."
+    ),
+)
+def update_apply(data: UpdateApplyIn, session: SessionDep, settings: SettingsDep):
+    return request_update(session, settings, data.version)
 
 
 # --------------------------------------------------------------------------- health

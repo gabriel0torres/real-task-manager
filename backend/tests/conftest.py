@@ -24,6 +24,7 @@ def make_settings(data_dir, **overrides) -> Settings:
         "admin_username": ADMIN_USER,
         "admin_password": ADMIN_PASSWORD,
         "frontend_dir": data_dir / "no-frontend",  # don't serve the SPA in tests
+        "update_check": False,  # never call GitHub from tests
         **overrides,
     }
     return Settings(**values, _env_file=None)

@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowUpCircle,
   CircleUser,
   History,
   KeyRound,
@@ -14,6 +15,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { useLogout, useMe } from "../api/auth";
 import { useWorkerStatus } from "../api/hooks";
+import { useUpdateStatus } from "../api/updates";
 import { NavTree } from "../features/tree/NavTree";
 import { formatRelative } from "../lib/format";
 import { cx } from "./ui";
@@ -39,6 +41,23 @@ function WorkerIndicator() {
       <Activity className="size-3" />
       {data.online ? "Motor ativo" : "Motor parado"}
     </span>
+  );
+}
+
+function UpdateIndicator() {
+  const { data: user } = useMe();
+  const canManage = Boolean(user?.permissions.includes("manage_settings"));
+  const { data } = useUpdateStatus(canManage);
+  if (!canManage || !data || !(data.update_available || data.update_in_progress)) return null;
+  return (
+    <NavLink
+      to="/settings?tab=updates"
+      className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-indigo-200 ring-inset hover:bg-indigo-100"
+      title={data.update_in_progress ? "Atualização em andamento" : `Versão instalada: ${data.current_version}`}
+    >
+      <ArrowUpCircle className="size-3.5" />
+      {data.update_in_progress ? "Atualizando..." : `Nova versão ${data.latest_tag}`}
+    </NavLink>
   );
 }
 
@@ -101,6 +120,7 @@ export function Layout() {
           <span>Real Task Scheduler</span>
         </NavLink>
         <div className="ml-auto flex items-center gap-3">
+          <UpdateIndicator />
           <WorkerIndicator />
           <UserMenu />
         </div>
