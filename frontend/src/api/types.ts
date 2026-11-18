@@ -213,4 +213,6 @@ export interface SystemInfo {
 
 export interface GeneralSettings {
   default_timezone: string;
+  retention_days: number | null;
+  retention_keep_last: number | null;
 }

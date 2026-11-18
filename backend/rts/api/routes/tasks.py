@@ -9,6 +9,7 @@ from rts.schemas.variables import EffectiveVariableOut
 from rts.services import hierarchy as svc
 from rts.services.settings import get_default_timezone
 from rts.services.variables import effective_variables
+from rts.services.workspaces import remove_workspaces
 
 router = APIRouter(prefix="/tasks", tags=["Tarefas"], responses={404: {"model": ErrorOut}})
 
@@ -60,9 +61,10 @@ def update_task(task_id: int, data: TaskUpdate, session: SessionDep, settings: S
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Excluir tarefa (e seu histórico)",
 )
-def delete_task(task_id: int, session: SessionDep):
+def delete_task(task_id: int, session: SessionDep, settings: SettingsDep):
     svc.delete_task(session, task_id)
     session.commit()
+    remove_workspaces(settings, [task_id])
 
 
 @router.get(

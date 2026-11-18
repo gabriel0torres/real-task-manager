@@ -16,6 +16,7 @@ from rts.db import make_engine, make_session_factory
 from rts.engine.context import EngineContext
 from rts.engine.scheduler import SchedulerEngine
 from rts.migrations.runner import upgrade_to_head
+from rts.notifications.service import Notifier
 from rts.security.crypto import SecretBox, load_secret_key
 
 log = logging.getLogger("rts.worker")
@@ -46,10 +47,14 @@ def main() -> None:
     if settings.auto_migrate:
         _migrate_with_retry(db_engine)
 
+    session_factory = make_session_factory(db_engine)
+    secret_box = SecretBox(load_secret_key(settings))
+    notifier = Notifier(session_factory, secret_box, settings)
     ctx = EngineContext(
         settings=settings,
-        session_factory=make_session_factory(db_engine),
-        secret_box=SecretBox(load_secret_key(settings)),
+        session_factory=session_factory,
+        secret_box=secret_box,
+        notifier=notifier,
     )
     engine = SchedulerEngine(ctx)
 
@@ -68,6 +73,7 @@ def main() -> None:
             pass
     finally:
         engine.stop()
+        notifier.shutdown()
         db_engine.dispose()
 
 

@@ -42,6 +42,7 @@ from rts.models import (
     WorkerHeartbeat,
 )
 from rts.scheduling.cron import CronError, build_trigger, fire_times_between
+from rts.services.retention import apply_retention
 from rts.services.runs import append_system_log, create_run, finish_without_running
 from rts.services.settings import CONFIG_REVISION, get_default_timezone, get_setting
 
@@ -51,6 +52,7 @@ INTERRUPTED_REASON = "Interrompida por reinício."
 SKIPPED_BUSY_REASON = "Pulada: a execução anterior ainda está em andamento."
 SKIPPED_QUEUE_FULL_REASON = "Pulada: já existe uma execução aguardando na fila."
 HEARTBEAT_RETENTION = timedelta(days=7)
+RETENTION_INTERVAL_SECONDS = 3600
 
 
 class _FireExecutor(BaseExecutor):
@@ -127,6 +129,7 @@ class SchedulerEngine:
         self._wake = threading.Event()
         self._loop_thread: threading.Thread | None = None
         self._last_heartbeat = 0.0
+        self._last_retention = 0.0  # 0 = apply on the first tick
         self.started = False
 
     # ================================================================ lifecycle
@@ -176,6 +179,10 @@ class SchedulerEngine:
             self._heartbeat()
         self.reload_jobs()
         self.dispatch()
+        if now - self._last_retention >= RETENTION_INTERVAL_SECONDS:
+            self._last_retention = now
+            with self.ctx.session_factory() as session:
+                apply_retention(session, self.ctx.clock())
 
     # ================================================================ heartbeat
     def _heartbeat(self, initial: bool = False) -> None:
@@ -203,8 +210,10 @@ class SchedulerEngine:
     def recover(self) -> None:
         """Fail runs interrupted by a crash and apply the missed-run policy."""
         now = self.ctx.clock()
+        interrupted: list[int] = []
         with self.ctx.session_factory() as session:
             for run in session.scalars(select(Run).where(Run.status == RunStatus.RUNNING)):
+                interrupted.append(run.id)
                 _kill_orphan(run)
                 run.status = RunStatus.FAILED
                 run.status_reason = INTERRUPTED_REASON
@@ -218,6 +227,9 @@ class SchedulerEngine:
             if downtime_start is not None:
                 self._apply_missed_runs(session, downtime_start, now)
             session.commit()
+        if self.ctx.notifier is not None:
+            for run_id in interrupted:
+                self.ctx.notifier.notify_run(run_id)
 
     def _apply_missed_runs(self, session: Session, downtime_start: datetime, now: datetime) -> None:
         default_tz = get_default_timezone(session, self.ctx.settings.default_timezone)

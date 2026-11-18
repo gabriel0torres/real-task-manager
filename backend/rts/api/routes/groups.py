@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
-from rts.api.deps import SessionDep
+from rts.api.deps import SessionDep, SettingsDep
 from rts.schemas.common import ErrorOut
 from rts.schemas.hierarchy import GroupCreate, GroupOut, GroupUpdate
 from rts.services import hierarchy as svc
+from rts.services.workspaces import remove_workspaces, task_ids_under
 
 router = APIRouter(prefix="/groups", tags=["Grupos"], responses={404: {"model": ErrorOut}})
 
@@ -50,6 +51,8 @@ def update_group(group_id: int, data: GroupUpdate, session: SessionDep):
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Excluir grupo (e tudo abaixo dele)",
 )
-def delete_group(group_id: int, session: SessionDep):
+def delete_group(group_id: int, session: SessionDep, settings: SettingsDep):
+    task_ids = task_ids_under(session, group_id=group_id)
     svc.delete_group(session, group_id)
     session.commit()
+    remove_workspaces(settings, task_ids)

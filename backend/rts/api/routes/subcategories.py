@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
-from rts.api.deps import SessionDep
+from rts.api.deps import SessionDep, SettingsDep
 from rts.schemas.common import ErrorOut
 from rts.schemas.hierarchy import SubcategoryCreate, SubcategoryOut, SubcategoryUpdate
 from rts.schemas.variables import EffectiveVariableOut
 from rts.services import hierarchy as svc
 from rts.services.variables import inherited_variables
+from rts.services.workspaces import remove_workspaces, task_ids_under
 
 router = APIRouter(
     prefix="/subcategories", tags=["Subcategorias"], responses={404: {"model": ErrorOut}}
@@ -63,6 +64,8 @@ def update_subcategory(subcategory_id: int, data: SubcategoryUpdate, session: Se
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Excluir subcategoria (e suas tarefas)",
 )
-def delete_subcategory(subcategory_id: int, session: SessionDep):
+def delete_subcategory(subcategory_id: int, session: SessionDep, settings: SettingsDep):
+    task_ids = task_ids_under(session, subcategory_id=subcategory_id)
     svc.delete_subcategory(session, subcategory_id)
     session.commit()
+    remove_workspaces(settings, task_ids)

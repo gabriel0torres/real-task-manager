@@ -11,17 +11,33 @@ from rts.db import Base
 from rts.main import create_app
 
 API = "/api/v1"
+ADMIN_USER = "admin"
+ADMIN_PASSWORD = "senha-admin-123"
+
+
+def make_settings(data_dir, **overrides) -> Settings:
+    values = {
+        "data_dir": data_dir,
+        "secret_key": Fernet.generate_key().decode(),
+        "default_timezone": "America/Sao_Paulo",
+        "auto_migrate": False,
+        "admin_username": ADMIN_USER,
+        "admin_password": ADMIN_PASSWORD,
+        "frontend_dir": data_dir / "no-frontend",  # don't serve the SPA in tests
+        **overrides,
+    }
+    return Settings(**values, _env_file=None)
+
+
+def login(client: TestClient, username: str = ADMIN_USER, password: str = ADMIN_PASSWORD):
+    resp = client.post(f"{API}/auth/login", json={"username": username, "password": password})
+    assert resp.status_code == 200, resp.text
+    return resp
 
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    return Settings(
-        data_dir=tmp_path / "data",
-        secret_key=Fernet.generate_key().decode(),
-        default_timezone="America/Sao_Paulo",
-        auto_migrate=False,
-        _env_file=None,
-    )
+    return make_settings(tmp_path / "data")
 
 
 @pytest.fixture
@@ -33,8 +49,17 @@ def app(settings):
 
 
 @pytest.fixture
-def client(app) -> Iterator[TestClient]:
+def anon_client(app) -> Iterator[TestClient]:
+    """Client without a session (admin user exists)."""
     with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def client(app) -> Iterator[TestClient]:
+    """Client logged in as the administrator."""
+    with TestClient(app) as c:
+        login(c)
         yield c
 
 

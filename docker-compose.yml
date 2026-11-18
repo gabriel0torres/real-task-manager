@@ -1,0 +1,71 @@
+# Real Task Scheduler
+#
+#   docker compose up -d --build                      # SQLite (padrão)
+#   docker compose --profile postgres up -d --build   # com PostgreSQL (defina RTS_DATABASE_URL, veja o README)
+#
+# Configure pelo arquivo .env ao lado deste (veja .env.example).
+
+name: rts
+
+x-rts-env: &rts-env
+  RTS_DATA_DIR: /data
+  RTS_SECRET_KEY: ${RTS_SECRET_KEY:-}
+  RTS_DATABASE_URL: ${RTS_DATABASE_URL:-}
+  RTS_DEFAULT_TIMEZONE: ${RTS_DEFAULT_TIMEZONE:-America/Sao_Paulo}
+  RTS_PUBLIC_URL: ${RTS_PUBLIC_URL:-}
+  RTS_LOG_LEVEL: ${RTS_LOG_LEVEL:-INFO}
+  TZ: ${TZ:-America/Sao_Paulo}
+
+services:
+  api:
+    build: .
+    image: real-task-scheduler:latest
+    environment:
+      <<: *rts-env
+      RTS_ADMIN_USERNAME: ${RTS_ADMIN_USERNAME:-admin}
+      RTS_ADMIN_PASSWORD: ${RTS_ADMIN_PASSWORD:-}
+      RTS_COOKIE_SECURE: ${RTS_COOKIE_SECURE:-false}
+    ports:
+      - "${RTS_PORT:-8000}:8000"
+    volumes:
+      - rts-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+
+  # Motor de agendamento: processo separado, a queda da API não interrompe execuções.
+  worker:
+    image: real-task-scheduler:latest
+    command: ["rts-worker"]
+    environment: *rts-env
+    volumes:
+      - rts-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: rts
+      POSTGRES_USER: rts
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rts}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rts -d rts"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  rts-data:
+  pg-data:

@@ -127,7 +127,10 @@ export function TaskPage() {
         }
       />
 
-      <div className="mb-4 flex gap-1 border-b border-slate-200" role="tablist">
+      <div
+        className="mb-4 flex gap-1 overflow-x-auto border-b border-slate-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        role="tablist"
+      >
         {TABS.map((t) => (
           <button
             key={t.id}

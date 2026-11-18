@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import pytest
 import yaml
-from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 import rts.transfer.crypto as transfer_crypto
-from rts.config import Settings
 from rts.db import Base
 from rts.main import create_app
 from rts.models import Group, Run, RunStatus, RunTrigger, Subcategory, Task, Variable
 from rts.services.runs import create_run
 from rts.services.settings import get_default_timezone
-from tests.conftest import API, Factory
+from tests.conftest import API, Factory, login, make_settings
 
 PASSWORD = "senha-forte-123"
 
@@ -28,16 +26,11 @@ def fast_kdf(monkeypatch):
 @pytest.fixture
 def other_app(tmp_path):
     """A second, clean installation with a different secret key."""
-    settings = Settings(
-        data_dir=tmp_path / "other",
-        secret_key=Fernet.generate_key().decode(),
-        default_timezone="UTC",
-        auto_migrate=False,
-        _env_file=None,
-    )
+    settings = make_settings(tmp_path / "other", default_timezone="UTC")
     app = create_app(settings)
     Base.metadata.create_all(app.state.engine)
     with TestClient(app) as client:
+        login(client)
         yield app, client
     app.state.engine.dispose()
 

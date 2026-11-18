@@ -11,7 +11,7 @@ from rts.db import Base
 from rts.main import create_app
 from rts.models import RunStatus, RunTrigger, WorkerHeartbeat
 from rts.services.runs import append_system_log, create_run
-from tests.conftest import API
+from tests.conftest import API, login
 
 
 def _task(make, **kw):
@@ -154,6 +154,7 @@ def test_embedded_worker_runs_task_end_to_end(tmp_path, settings):
     app = create_app(embedded)
     Base.metadata.create_all(app.state.engine)
     with TestClient(app) as client:
+        login(client)
         g = client.post(f"{API}/groups", json={"name": "g"}).json()
         s = client.post(f"{API}/subcategories", json={"group_id": g["id"], "name": "s"}).json()
         t = client.post(

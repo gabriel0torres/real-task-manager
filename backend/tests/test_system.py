@@ -8,7 +8,7 @@ from rts import __version__
 from rts.config import Settings
 from rts.db import Base
 from rts.main import create_app
-from tests.conftest import API
+from tests.conftest import API, login
 
 
 def test_health(client):
@@ -54,6 +54,7 @@ def test_migrations_build_schema_matching_models(tmp_path, settings):
     from fastapi.testclient import TestClient
 
     with TestClient(app) as client:
+        login(client)
         engine = app.state.engine
         tables = set(inspect(engine).get_table_names())
         assert {"groups", "subcategories", "tasks", "variables", "runs", "run_log_chunks"} <= tables

@@ -33,6 +33,13 @@ export function errorMessage(body: unknown, status: number): string {
   return `Erro ${status} ao comunicar com o servidor.`;
 }
 
+/** Fired when the session expires so the app can show the login screen. */
+export const UNAUTHORIZED_EVENT = "rts:unauthorized";
+
+export function notifyUnauthorized() {
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+}
+
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method,
@@ -46,6 +53,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     } catch {
       /* non-JSON error */
     }
+    if (response.status === 401 && !path.startsWith("/auth/")) notifyUnauthorized();
     throw new ApiError(response.status, errorMessage(parsed, response.status));
   }
   if (response.status === 204) return undefined as T;
@@ -56,6 +64,7 @@ export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {}),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
+  put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   del: (path: string) => request<void>("DELETE", path),
 };
 

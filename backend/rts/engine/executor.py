@@ -315,4 +315,6 @@ class RunExecutor:
                 )
             session.commit()
         log.info("Run %s finished: %s", self.run_id, status.value)
+        if self.ctx.notifier is not None:
+            self.ctx.notifier.notify_run(self.run_id)
         return status

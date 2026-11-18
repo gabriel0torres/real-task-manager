@@ -13,6 +13,7 @@ import { EntityForm } from "../components/EntityForm";
 import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { GroupNotifications } from "../features/notifications/GroupNotifications";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
 
@@ -163,6 +164,8 @@ export function GroupPage() {
         </Card>
 
         <VariablesEditor scope="group" ownerId={group.id} title="Variáveis do grupo" />
+
+        <GroupNotifications groupId={group.id} />
       </div>
     </>
   );

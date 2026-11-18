@@ -25,10 +25,31 @@ class Settings(BaseSettings):
     # Seconds a scheduled fire may be late before the missed-run policy applies.
     misfire_grace_seconds: int = 60
 
+    # Authentication. The admin user is created on first start; if no password is
+    # given a random one is generated, printed in the log and must be changed.
+    admin_username: str = "admin"
+    admin_password: str | None = None
+    session_ttl_hours: int = 24 * 7
+    # Set to true when the UI is served over HTTPS.
+    cookie_secure: bool = False
+
+    # Public base URL of the UI, used for links in notifications (optional).
+    public_url: str | None = None
+    # Built frontend (Vite "dist") served by the API, if present.
+    frontend_dir: Path | None = None
+
     @field_validator("data_dir")
     @classmethod
     def _resolve_data_dir(cls, value: Path) -> Path:
         return value.expanduser().resolve()
+
+    @property
+    def effective_frontend_dir(self) -> Path | None:
+        if self.frontend_dir is not None:
+            return self.frontend_dir if (self.frontend_dir / "index.html").exists() else None
+        # Development checkout: <repo>/frontend/dist
+        candidate = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+        return candidate if (candidate / "index.html").exists() else None
 
     @property
     def effective_database_url(self) -> str:

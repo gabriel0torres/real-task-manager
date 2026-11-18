@@ -1,7 +1,18 @@
-import { Activity, History, KeyRound, LayoutDashboard, Menu, Settings, X } from "lucide-react";
+import {
+  Activity,
+  CircleUser,
+  History,
+  KeyRound,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Settings,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 
+import { useLogout, useMe } from "../api/auth";
 import { useWorkerStatus } from "../api/hooks";
 import { NavTree } from "../features/tree/NavTree";
 import { formatRelative } from "../lib/format";
@@ -31,6 +42,44 @@ function WorkerIndicator() {
   );
 }
 
+function UserMenu() {
+  const { data: user } = useMe();
+  const logout = useLogout();
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+  useEffect(() => setOpen(false), [location.pathname]);
+  if (!user) return null;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-slate-700 hover:bg-slate-100"
+      >
+        <CircleUser className="size-5 text-slate-500" />
+        <span className="hidden sm:inline">{user.username}</span>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-40 mt-1 w-44 rounded-md bg-white py-1 shadow-lg ring-1 ring-slate-200">
+          <NavLink role="menuitem" to="/account" className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+            <KeyRound className="size-4" /> Trocar senha
+          </NavLink>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => logout.mutate()}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+          >
+            <LogOut className="size-4" /> Sair
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
@@ -51,8 +100,9 @@ export function Layout() {
           <img src="/favicon.svg" alt="" className="size-7" />
           <span>Real Task Scheduler</span>
         </NavLink>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
           <WorkerIndicator />
+          <UserMenu />
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
