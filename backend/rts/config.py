@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,6 +14,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RTS_", env_file=".env", extra="ignore")
 
     data_dir: Path = Field(default=Path("./data"))
+    # Where `rts api` / `rts start` listen.
+    host: str = "0.0.0.0"
+    port: int = 8000
     database_url: str | None = None
     secret_key: str | None = None
     default_timezone: str = "America/Sao_Paulo"
@@ -47,9 +51,13 @@ class Settings(BaseSettings):
     def effective_frontend_dir(self) -> Path | None:
         if self.frontend_dir is not None:
             return self.frontend_dir if (self.frontend_dir / "index.html").exists() else None
-        # Development checkout: <repo>/frontend/dist
-        candidate = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-        return candidate if (candidate / "index.html").exists() else None
+        candidates = [
+            # Release packages (wheel / standalone executable) ship the built UI here.
+            Path(__file__).resolve().parent / "web",
+            # Development checkout: <repo>/frontend/dist
+            Path(__file__).resolve().parents[2] / "frontend" / "dist",
+        ]
+        return next((c for c in candidates if (c / "index.html").exists()), None)
 
     @property
     def effective_database_url(self) -> str:
@@ -77,4 +85,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # RTS_ENV_FILE lets services point at the installation's configuration file.
+    return Settings(_env_file=os.environ.get("RTS_ENV_FILE", ".env"))

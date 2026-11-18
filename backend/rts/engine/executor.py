@@ -15,7 +15,14 @@ from typing import IO
 
 from rts.engine.context import EngineContext
 from rts.engine.logwriter import LogWriter
-from rts.engine.process import SpawnError, default_shell, kill_tree, prepare_command, spawn
+from rts.engine.process import (
+    FROZEN,
+    SpawnError,
+    default_shell,
+    kill_tree,
+    prepare_command,
+    spawn,
+)
 from rts.models import LogStream, Run, RunStatus, RunTrigger
 from rts.security.crypto import SecretDecryptError
 from rts.security.masking import SecretMasker
@@ -54,15 +61,50 @@ class _Plan:
 def _child_base_env() -> dict[str, str]:
     # Never leak the RTS configuration (secret key, database URL...) to tasks.
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith("RTS_")}
+    if FROZEN:
+        # PyInstaller points the library path at its bundle; give tasks the original one.
+        for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+            original = env.pop(f"{var}_ORIG", None)
+            env.pop(var, None)
+            if original:
+                env[var] = original
+        for key in [k for k in env if k.startswith(("_PYI_", "_MEI"))]:
+            env.pop(key)
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
     return env
 
 
+def _fallback_encoding() -> str:
+    """Encoding of console programs that don't write UTF-8.
+
+    On Windows, cmd and most native tools write in the OEM code page (cp850 on a
+    Portuguese system), so "versão" would otherwise show up as "vers�o".
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            return f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+        except Exception:  # pragma: no cover
+            return "cp850"
+    return "latin-1"
+
+
+FALLBACK_ENCODING = _fallback_encoding()
+
+
+def decode_line(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(FALLBACK_ENCODING, errors="replace")
+
+
 def _reader(pipe: IO[bytes], stream: LogStream, out: queue.Queue) -> None:
     try:
         for raw in iter(lambda: pipe.readline(8192), b""):
-            out.put((stream, raw.decode("utf-8", errors="replace")))
+            out.put((stream, decode_line(raw)))
     except (OSError, ValueError):  # pipe closed underneath us
         pass
     finally:

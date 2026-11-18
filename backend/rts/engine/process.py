@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import shutil
 import signal
@@ -45,6 +46,46 @@ def _resolve(executable: str) -> str:
     return path
 
 
+FROZEN = bool(getattr(sys, "frozen", False))
+
+
+def python_interpreter() -> list[str]:
+    """Interpreter for "python" tasks.
+
+    Normally the RTS's own Python (always present, predictable). In the standalone
+    executable there is no usable interpreter inside, so use the machine's one.
+    """
+    if not FROZEN:
+        return [sys.executable]
+    found = _machine_python()
+    if found:
+        return found
+    raise SpawnError(
+        "Python não encontrado no servidor. Instale o Python 3 para tarefas com o interpretador "
+        "Python (o RTS executável não inclui um interpretador para as tarefas)."
+    )
+
+
+@functools.cache
+def _machine_python() -> tuple[str, ...] | None:
+    candidates = [("py", "-3")] if IS_WINDOWS else []
+    candidates += [("python3",), ("python",)]
+    for name, *args in candidates:
+        path = shutil.which(name)
+        if not path:
+            continue
+        # Actually run it: on Windows "python" may be the Microsoft Store placeholder.
+        try:
+            ok = subprocess.run(
+                [path, *args, "-c", "print('ok')"], capture_output=True, timeout=15, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if ok.returncode == 0 and ok.stdout.strip() == b"ok":
+            return (path, *args)
+    return None
+
+
 def prepare_command(shell: Shell | None, command: str, script_dir: Path) -> list[str]:
     """Write the task command to a script file and return the argv to execute it."""
     shell = shell or default_shell()
@@ -70,8 +111,7 @@ def prepare_command(shell: Shell | None, command: str, script_dir: Path) -> list
         case Shell.PWSH:
             return [_resolve("pwsh"), *_PS_FLAGS, str(script)]
         case Shell.PYTHON:
-            # The RTS interpreter: always present and predictable.
-            return [sys.executable, "-u", str(script)]
+            return [*python_interpreter(), "-u", str(script)]
     raise SpawnError(f"Shell não suportado: {shell}")  # pragma: no cover
 
 

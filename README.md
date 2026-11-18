@@ -17,9 +17,10 @@ notificações e exportação/importação de configurações entre instalaçõe
 
 ## Sumário
 
-1. [Instalação com Docker](#instalação-com-docker)
-2. [Instalação manual](#instalação-manual)
-3. [Primeiro acesso](#primeiro-acesso)
+1. [Instalação sem Docker](#instalação-sem-docker) (Windows e Linux, com ou sem Python)
+2. [Instalação com Docker](#instalação-com-docker)
+3. [Instalação a partir do código-fonte](#instalação-a-partir-do-código-fonte)
+4. [Primeiro acesso](#primeiro-acesso)
 4. [Configuração (variáveis de ambiente)](#configuração-variáveis-de-ambiente)
 5. [Uso](#uso)
 6. [Variáveis e segredos](#variáveis-e-segredos)
@@ -31,6 +32,115 @@ notificações e exportação/importação de configurações entre instalaçõe
 12. [Arquitetura](#arquitetura)
 13. [Desenvolvimento](#desenvolvimento)
 14. [Solução de problemas](#solução-de-problemas)
+
+---
+
+## Instalação sem Docker
+
+Um comando instala (ou atualiza) o RTS e o registra para iniciar junto com a máquina. O
+instalador escolhe sozinho o formato:
+
+| Formato | Quando | Requisito na máquina |
+|---|---|---|
+| **Pacote Python** (wheel) | Python 3.12+ encontrado | Python 3.12+ (no Linux, também `python3-venv`) |
+| **Executável autônomo** | sem Python (ou `-Mode standalone`) | nada |
+
+Os arquivos vêm da [última Release do GitHub](https://github.com/gabriel0torres/real-task-manager/releases)
+(veja [Publicar uma versão](#publicar-uma-versão)).
+
+### Windows
+
+No **PowerShell como Administrador** (para registrar a inicialização automática):
+
+```powershell
+irm https://raw.githubusercontent.com/gabriel0torres/real-task-manager/main/install.ps1 | iex
+```
+
+- Instala em `C:\ProgramData\RTS` (configuração em `.env`, dados em `data\`).
+- Registra no **Agendador de Tarefas** as tarefas `RTS API` e `RTS Worker`, que iniciam com o
+  Windows (conta SYSTEM) e são reiniciadas se pararem.
+- Mostra no final o endereço, o usuário e a senha inicial (que deve ser trocada no 1º acesso).
+
+Opções (baixe o `install.ps1` e execute com parâmetros):
+
+```powershell
+.\install.ps1 -Mode standalone        # força o executável (auto | python | standalone)
+.\install.ps1 -Port 8080 -AdminPassword "minha-senha-forte"
+.\install.ps1 -NoService              # não registra a inicialização automática
+.\install.ps1 -Version v0.1.0         # versão específica
+.\install.ps1 -From .\rts-0.1.0-windows-x64.zip   # instalação offline com o arquivo baixado
+```
+
+Comandos úteis (`rts.cmd` fica na pasta de instalação):
+
+```powershell
+& "C:\ProgramData\RTS\rts.cmd" start                  # rodar em primeiro plano (sem serviço)
+& "C:\ProgramData\RTS\rts.cmd" admin reset-password   # senha esquecida
+Stop-ScheduledTask "RTS API"; Start-ScheduledTask "RTS API"   # reiniciar a API
+```
+
+Desinstalar: `Unregister-ScheduledTask "RTS API","RTS Worker"` e apague `C:\ProgramData\RTS`
+(guarde antes `data\` e `.env` se quiser manter os dados).
+
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabriel0torres/real-task-manager/main/install.sh | sudo sh
+```
+
+- Como root: instala em `/opt/rts`, cria o usuário de sistema `rts` e os serviços systemd
+  `rts-api` e `rts-worker` (iniciam no boot, reiniciam se pararem). O comando `rts` fica em
+  `/usr/local/bin`.
+- Sem `sudo`: instala em `~/.local/share/rts` com serviços systemd do usuário
+  (para iniciarem no boot: `sudo loginctl enable-linger $USER`).
+
+Opções: `--mode auto|python|standalone`, `--port 8080`, `--admin-password ...`,
+`--no-service`, `--version v0.1.0`, `--from arquivo` (offline):
+
+```bash
+curl -fsSL .../install.sh | sudo sh -s -- --mode standalone --port 8080
+```
+
+Comandos úteis:
+
+```bash
+sudo systemctl status rts-api rts-worker
+sudo journalctl -u rts-worker -f            # logs do motor
+sudo -u rts rts admin reset-password         # senha esquecida
+```
+
+O executável Linux funciona em distribuições com glibc 2.31 ou mais nova (Ubuntu 20.04+,
+Debian 11+, RHEL/Rocky/Alma 9+). Em sistemas mais antigos, use o modo Python ou Docker.
+
+### Atualizar
+
+Rode o mesmo comando de instalação de novo: o programa é substituído e a configuração (`.env`)
+e os dados (`data/`) são mantidos; as migrations do banco são aplicadas sozinhas.
+
+### Observações
+
+- No modo executável, tarefas com o interpretador **Python** usam o Python instalado na máquina
+  (`py`/`python3`); o executável não inclui um interpretador para as tarefas.
+- O arquivo `.env` da pasta de instalação aceita todas as [variáveis de ambiente](#configuração-variáveis-de-ambiente).
+  Reinicie os serviços após alterá-lo.
+- Sem serviço registrado, `rts start` roda a API e o motor em processos separados (se a API
+  cair, as execuções continuam) até você pressionar Ctrl+C.
+
+### Publicar uma versão
+
+Os instaladores baixam os arquivos da Release do GitHub. Para gerar uma nova versão:
+
+1. Atualize `__version__` em `backend/rts/__init__.py` e faça o commit.
+2. Crie e envie a tag:
+
+   ```bash
+   git tag v0.1.0
+   git push origin main v0.1.0
+   ```
+
+O workflow [.github/workflows/release.yml](.github/workflows/release.yml) roda os testes, gera o
+wheel e os executáveis de Windows e Linux e publica a Release com eles e os instaladores.
+Para gerar localmente: `python scripts/build_release.py --exe` (veja o cabeçalho do script).
 
 ---
 
@@ -88,9 +198,10 @@ USER rts
 
 ---
 
-## Instalação manual
+## Instalação a partir do código-fonte
 
-Requisitos: Python 3.12+ e Node.js 20+ (apenas para gerar a interface).
+Para quem quer rodar direto do repositório (sem Release). Requisitos: Python 3.12+ e
+Node.js 20+ (apenas para gerar a interface).
 
 ```bash
 # interface
@@ -105,18 +216,14 @@ python -m venv .venv
 .venv/bin/pip install ".[postgres]"        # Windows: .venv\Scripts\pip install ".[postgres]"
 ```
 
-Em dois terminais (dentro de `backend/`):
+Dentro de `backend/`:
 
 ```bash
-.venv/bin/uvicorn rts.main:create_app --factory --host 0.0.0.0 --port 8000
+.venv/bin/rts start          # API + motor (Ctrl+C para parar)
 ```
 
-```bash
-.venv/bin/rts-worker
-```
-
-Num servidor, rode os dois como serviços (systemd, NSSM no Windows...). As migrations do banco
-são aplicadas automaticamente ao iniciar.
+Ou separadamente, `rts api` e `rts worker` (é assim que os serviços rodam). As migrations do
+banco são aplicadas automaticamente ao iniciar.
 
 ---
 
@@ -124,6 +231,8 @@ são aplicadas automaticamente ao iniciar.
 
 Na primeira inicialização é criado o usuário administrador (`RTS_ADMIN_USERNAME`, padrão `admin`):
 
+- pelos instaladores sem Docker, a senha aparece no final da instalação (gerada, a ser trocada
+  no 1º acesso, ou a que você passou em `-AdminPassword`/`--admin-password`);
 - com `RTS_ADMIN_PASSWORD` definida, essa é a senha;
 - sem ela, uma senha aleatória é gerada e exibida **no log da API**
   (`docker compose logs api | grep "senha gerada"`) e precisa ser trocada no primeiro login.
@@ -448,6 +557,7 @@ tabela em [Variáveis e segredos](#variáveis-e-segredos); o editor avisa e corr
 **"Não foi possível decifrar um segredo"** — a `RTS_SECRET_KEY`/`secret.key` mudou. Restaure a
 chave original ou cadastre os segredos novamente.
 
-**Esqueci a senha do administrador** — pare a API, apague a linha da tabela `users` e reinicie
-com `RTS_ADMIN_PASSWORD` definida (o usuário é recriado). Exemplo com SQLite:
-`sqlite3 data/rts.db "delete from users;"`.
+**Esqueci a senha do administrador** — `rts admin reset-password` gera uma nova senha (a ser
+trocada no próximo acesso); use `--password` para escolher uma. Na instalação sem Docker, use o
+`rts`/`rts.cmd` da pasta de instalação; com Docker:
+`docker compose exec api rts admin reset-password`.

@@ -30,6 +30,7 @@ dev = [
 ]
 
 [project.scripts]
+rts = "rts.cli:main"
 rts-api = "rts.main:run"
 rts-worker = "rts.worker:main"
 
@@ -40,7 +41,7 @@ version = { attr = "rts.__version__" }
 include = ["rts*"]
 
 [tool.setuptools.package-data]
-rts = ["migrations/script.py.mako", "migrations/versions/*.py"]
+rts = ["migrations/script.py.mako", "migrations/versions/*.py", "web/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

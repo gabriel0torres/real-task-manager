@@ -19,6 +19,9 @@ data/
 # Frontend
 node_modules/
 frontend/dist/
+# built UI copied into the Python package by scripts/build_release.py
+backend/rts/web/
+release/
 *.tsbuildinfo
 coverage/
 

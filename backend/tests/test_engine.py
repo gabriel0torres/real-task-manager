@@ -98,6 +98,14 @@ def test_default_system_shell_multiline_script(engine, client, db, make):
     assert run.status is RunStatus.FAILED and run.exit_code == 4
 
 
+def test_output_decoding_utf8_and_legacy_code_page():
+    from rts.engine.executor import FALLBACK_ENCODING, decode_line
+
+    assert decode_line("versão ✓\n".encode()) == "versão ✓\n"
+    legacy = "versão\n".encode(FALLBACK_ENCODING)
+    assert decode_line(legacy) == "versão\n"
+
+
 def test_failure_exit_code(engine, client, db, py_task):
     t = py_task("import sys\nsys.exit(3)")
     run = get_run(db, execute(engine, client, t["id"]))
