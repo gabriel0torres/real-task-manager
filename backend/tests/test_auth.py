@@ -120,7 +120,7 @@ def test_api_token_triggers_task(app, client, anon_client, make, db):
     run = db.get(Run, resp.json()["id"])
     assert run.trigger is RunTrigger.API and run.triggered_by == "token:ci"
 
-    by_path = anon_client.post(f"{API}/trigger/INSTAGRAM/postagens/publicar", headers=headers)
+    by_path = anon_client.post(f"{API}/trigger/FINANCEIRO/fechamento/conciliar", headers=headers)
     assert by_path.status_code == 202
     assert anon_client.post(f"{API}/trigger/x/y/z", headers=headers).status_code == 404
     assert (

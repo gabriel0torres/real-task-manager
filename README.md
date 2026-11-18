@@ -274,7 +274,8 @@ Todas começam com `RTS_`. Veja também [.env.example](.env.example).
 
 ### Organização
 
-**Grupo** (ex.: `instagram`) → **Subcategoria** (ex.: `postagens`, `relatórios`) → **Tarefa**.
+**Grupo** (ex.: `financeiro`, `infraestrutura`) → **Subcategoria** (ex.: `backups`, `relatórios`,
+`integrações`) → **Tarefa** (ex.: `backup-banco-noturno`, `fechamento-diario`).
 Pausar um grupo ou subcategoria pausa todas as tarefas abaixo dele. A árvore lateral mostra o
 estado de cada tarefa: 🟢 última execução com sucesso, 🔴 falhou, 🔵 rodando, ⚪ pausada.
 
@@ -366,11 +367,11 @@ aquele grupo.
 {
   "event": "failure",
   "event_label": "Falha",
-  "task": {"id": 3, "name": "relatorio", "subcategory": "relatórios", "group": "instagram"},
+  "task": {"id": 3, "name": "fechamento-diario", "subcategory": "relatórios", "group": "financeiro"},
   "run": {"id": 42, "status": "failed", "trigger": "scheduled", "attempt": 2, "exit_code": 1,
           "duration_ms": 5321, "reason": "Código de saída 1.", "url": "https://rts.empresa.com/runs/42"},
   "log_tail": "...",
-  "message": "Falha: instagram / relatórios / relatorio\n..."
+  "message": "Falha: financeiro / relatórios / fechamento-diario\n..."
 }
 ```
 
@@ -389,7 +390,7 @@ curl -X POST -H "Authorization: Bearer rts_xxxxxxxx" http://servidor:8000/api/v1
 
 # pelo caminho grupo/subcategoria/tarefa
 curl -X POST -H "Authorization: Bearer rts_xxxxxxxx" \
-     http://servidor:8000/api/v1/trigger/instagram/relatorios/relatorio-diario
+     http://servidor:8000/api/v1/trigger/financeiro/relatorios/fechamento-diario
 ```
 
 ```powershell

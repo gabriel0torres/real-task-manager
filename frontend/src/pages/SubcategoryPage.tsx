@@ -32,7 +32,7 @@ export function SubcategoryFormPage() {
       <PageHeader
         breadcrumb={group && <Link to={`/groups/${group.id}`} className="hover:underline">{group.name}</Link>}
         title="Nova subcategoria"
-        subtitle="Subcategorias agrupam tarefas relacionadas (ex.: postagens, relatórios)."
+        subtitle="Subcategorias agrupam tarefas relacionadas (ex.: backups, relatórios, integrações)."
       />
       <Card>
         <EntityForm

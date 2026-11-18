@@ -230,7 +230,7 @@ class FileError(ValueError):
 
 
 def _loc(loc: tuple[Any, ...], raw: dict) -> str:
-    """Readable location: groups[0](instagram).subcategories[1](relatórios)..."""
+    """Readable location: groups[financeiro].subcategories[relatórios]..."""
     parts: list[str] = []
     node: Any = raw
     for item in loc:

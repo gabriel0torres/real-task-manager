@@ -36,20 +36,20 @@ def other_app(tmp_path):
 
 
 def seed(make: Factory) -> dict:
-    """Group 'instagram' with 2 subcategories, 3 tasks, variables on every level."""
+    """Group 'financeiro' with 2 subcategories, 3 tasks, variables on every level."""
     c = make.c
     c.patch(f"{API}/settings", json={"default_timezone": "America/Sao_Paulo"})
     make.variable("global", "ENV", "producao", description="ambiente")
     make.variable("global", "API_KEY", "global-secret", is_secret=True)
-    g = make.group("instagram", description="Conta principal")
-    make.variable("group", "IG_USER", "@empresa", owner_id=g["id"])
-    make.variable("group", "IG_TOKEN", "tok-secreto-123", owner_id=g["id"], is_secret=True)
-    posts = make.subcategory(g["id"], "postagens", description="Conteúdo")
+    g = make.group("financeiro", description="Rotinas financeiras")
+    make.variable("group", "ERP_USER", "rts_integracao", owner_id=g["id"])
+    make.variable("group", "ERP_TOKEN", "tok-secreto-123", owner_id=g["id"], is_secret=True)
+    posts = make.subcategory(g["id"], "fechamento", description="Conciliação bancária")
     reports = make.subcategory(g["id"], "relatórios", is_active=False)
     make.variable("subcategory", "FORMAT", "pdf", owner_id=reports["id"])
     t1 = make.task(
         posts["id"],
-        "publicar",
+        "conciliar",
         command="echo 'linha 1'\necho \"linha 2\"\n",
         shell="bash",
         cron_expressions=["30 8 * * 1,3"],
@@ -190,7 +190,7 @@ def test_export_encrypted_requires_password_and_hides_values(client, make):
     doc = yaml.safe_load(content)
     assert doc["encryption"]["algorithm"] == "fernet-pbkdf2-sha256"
     assert "tok-secreto-123" not in content
-    token = next(v for v in doc["groups"][0]["variables"] if v["key"] == "IG_TOKEN")
+    token = next(v for v in doc["groups"][0]["variables"] if v["key"] == "ERP_TOKEN")
     assert token["secret"] is True and token["value_encrypted"].startswith("gAAAA")
 
 
@@ -198,15 +198,15 @@ def test_export_group_and_subcategory_scopes(client, make):
     ids = seed(make)
     content, headers = export(client, scope="group", id=ids["group"]["id"])
     doc = yaml.safe_load(content)
-    assert "rts-group-instagram-" in headers["content-disposition"]
+    assert "rts-group-financeiro-" in headers["content-disposition"]
     assert doc["scope"] == "group" and "variables" not in doc and "settings" not in doc
-    assert [s["name"] for s in doc["groups"][0]["subcategories"]] == ["postagens", "relatórios"]
+    assert [s["name"] for s in doc["groups"][0]["subcategories"]] == ["fechamento", "relatórios"]
 
     content, headers = export(client, scope="subcategory", id=ids["reports"]["id"])
     doc = yaml.safe_load(content)
-    assert "rts-subcategory-instagram-relatorios-" in headers["content-disposition"]
+    assert "rts-subcategory-financeiro-relatorios-" in headers["content-disposition"]
     group = doc["groups"][0]
-    assert group["name"] == "instagram" and group["variables"] == []
+    assert group["name"] == "financeiro" and group["variables"] == []
     assert [s["name"] for s in group["subcategories"]] == ["relatórios"]
 
     assert client.post(f"{API}/transfer/export", json={"scope": "group"}).status_code == 422
@@ -245,7 +245,7 @@ def test_round_trip_omitting_secrets_lists_pending_and_accepts_values(app, clien
     assert plan["needs_password"] is False
     assert {p["path"] for p in plan["pending_secrets"]} == {
         "globals/var:API_KEY",
-        "group:instagram/var:IG_TOKEN",
+        "group:financeiro/var:ERP_TOKEN",
     }
 
     report = apply(
@@ -254,12 +254,12 @@ def test_round_trip_omitting_secrets_lists_pending_and_accepts_values(app, clien
         activate_tasks=True,
         secret_values={"globals/var:API_KEY": "global-secret"},
     )
-    assert [p["key"] for p in report["pending_secrets"]] == ["IG_TOKEN"]
+    assert [p["key"] for p in report["pending_secrets"]] == ["ERP_TOKEN"]
     snap = snapshot(target)
     assert snap["globals"]["API_KEY"] == ("global-secret", True, "")
-    assert snap["groups"]["instagram"]["vars"]["IG_TOKEN"] == (None, True, "")  # a preencher
+    assert snap["groups"]["financeiro"]["vars"]["ERP_TOKEN"] == (None, True, "")  # a preencher
     expected = snapshot(app)
-    expected["groups"]["instagram"]["vars"]["IG_TOKEN"] = (None, True, "")
+    expected["groups"]["financeiro"]["vars"]["ERP_TOKEN"] = (None, True, "")
     assert snap == expected
 
 
@@ -308,15 +308,17 @@ def test_schema_errors_point_to_the_location(app, client, make):
     assert report["valid"] is False
     joined = "\n".join(report["errors"])
     assert (
-        "groups[instagram].subcategories[relatórios].tasks[horaria].schedule.cron: "
+        "groups[financeiro].subcategories[relatórios].tasks[horaria].schedule.cron: "
         "'61 * * * *': Valor 61 fora do intervalo 0-59 no campo minuto." in joined
     )
-    assert "groups[instagram].subcategories[postagens].unknown_field: campo desconhecido" in joined
+    assert (
+        "groups[financeiro].subcategories[fechamento].unknown_field: campo desconhecido" in joined
+    )
 
     dup = yaml.safe_load(content)
-    dup["groups"][0]["subcategories"][0]["tasks"].append({"name": "PUBLICAR", "command": "x"})
+    dup["groups"][0]["subcategories"][0]["tasks"].append({"name": "CONCILIAR", "command": "x"})
     report = preview(client, yaml.safe_dump(dup, allow_unicode=True))
-    assert "tarefa 'PUBLICAR' aparece mais de uma vez" in report["errors"][0]
+    assert "tarefa 'CONCILIAR' aparece mais de uma vez" in report["errors"][0]
     assert snapshot(app) == before
 
 
@@ -350,7 +352,7 @@ def _changed_file(client, ids) -> str:
     doc = yaml.safe_load(content)
     group = doc["groups"][0]
     group["description"] = "Descrição nova"
-    group["variables"] = [{"key": "IG_USER", "value": "@nova"}, {"key": "NEW", "value": "1"}]
+    group["variables"] = [{"key": "ERP_USER", "value": "rts_novo"}, {"key": "NEW", "value": "1"}]
     posts = group["subcategories"][0]
     posts["tasks"][0]["command"] = "echo novo"
     posts["tasks"].append({"name": "nova-tarefa", "command": "echo 1"})
@@ -364,7 +366,7 @@ def test_conflict_defaults_to_skip(app, client, make):
     before = snapshot(app)
     plan = preview(client, content)
     group_item = plan["items"][0]
-    assert group_item["path"] == "group:instagram" and group_item["conflict"] is True
+    assert group_item["path"] == "group:financeiro" and group_item["conflict"] is True
     assert group_item["action"] == "skip"
     assert group_item["allowed_resolutions"] == ["overwrite", "merge", "rename", "skip"]
     apply(client, content)
@@ -376,22 +378,22 @@ def test_overwrite_makes_group_identical_to_file(app, client, make, db):
     run = create_run(db, ids["t1"]["id"], RunTrigger.MANUAL)
     db.commit()
     content = _changed_file(client, ids)
-    res = {"group:instagram": {"action": "overwrite"}}
+    res = {"group:financeiro": {"action": "overwrite"}}
 
     plan = preview(client, content, resolutions=res, activate_tasks=True)
     actions = {i["path"]: i["action"] for i in plan["items"]}
-    assert actions["group:instagram"] == "update"
-    assert actions["group:instagram/sub:relatórios"] == "delete"
-    assert actions["group:instagram/sub:novos"] == "create"
-    assert actions["group:instagram/sub:postagens/task:publicar"] == "update"
-    assert actions["group:instagram/sub:postagens/task:nova-tarefa"] == "create"
+    assert actions["group:financeiro"] == "update"
+    assert actions["group:financeiro/sub:relatórios"] == "delete"
+    assert actions["group:financeiro/sub:novos"] == "create"
+    assert actions["group:financeiro/sub:fechamento/task:conciliar"] == "update"
+    assert actions["group:financeiro/sub:fechamento/task:nova-tarefa"] == "create"
 
     apply(client, content, resolutions=res, activate_tasks=True)
-    group = snapshot(app)["groups"]["instagram"]
+    group = snapshot(app)["groups"]["financeiro"]
     assert group["desc"] == "Descrição nova"
-    assert group["vars"] == {"IG_USER": ("@nova", False, ""), "NEW": ("1", False, "")}  # exact
-    assert set(group["subs"]) == {"postagens", "novos"}
-    assert group["subs"]["postagens"]["tasks"]["publicar"]["fields"][1] == "echo novo"
+    assert group["vars"] == {"ERP_USER": ("rts_novo", False, ""), "NEW": ("1", False, "")}  # exact
+    assert set(group["subs"]) == {"fechamento", "novos"}
+    assert group["subs"]["fechamento"]["tasks"]["conciliar"]["fields"][1] == "echo novo"
     # Updated in place: the task keeps its id and its history.
     db.expire_all()
     assert db.get(Run, run.id) is not None and db.get(Task, ids["t1"]["id"]).command == "echo novo"
@@ -401,46 +403,48 @@ def test_merge_keeps_existing_and_resolves_children(app, client, make):
     ids = seed(make)
     content = _changed_file(client, ids)
     res = {
-        "group:instagram": {"action": "merge"},
-        "group:instagram/sub:postagens": {"action": "merge"},
-        "group:instagram/sub:postagens/task:publicar": {
+        "group:financeiro": {"action": "merge"},
+        "group:financeiro/sub:fechamento": {"action": "merge"},
+        "group:financeiro/sub:fechamento/task:conciliar": {
             "action": "rename",
-            "new_name": "publicar-v2",
+            "new_name": "conciliar-v2",
         },
     }
     plan = preview(client, content, resolutions=res)
     conflicts = {i["path"]: i["resolution"] for i in plan["items"] if i["conflict"]}
     assert conflicts == {
-        "group:instagram": "merge",
-        "group:instagram/sub:postagens": "merge",
-        "group:instagram/sub:postagens/task:publicar": "rename",
+        "group:financeiro": "merge",
+        "group:financeiro/sub:fechamento": "merge",
+        "group:financeiro/sub:fechamento/task:conciliar": "rename",
     }
 
     apply(client, content, resolutions=res)
-    group = snapshot(app)["groups"]["instagram"]
-    assert set(group["subs"]) == {"postagens", "relatórios", "novos"}  # nothing deleted
-    assert group["vars"]["IG_USER"] == ("@nova", False, "")  # file wins
-    assert group["vars"]["IG_TOKEN"] == ("tok-secreto-123", True, "")  # kept
-    tasks = group["subs"]["postagens"]["tasks"]
-    assert set(tasks) == {"publicar", "publicar-v2", "nova-tarefa"}
-    assert tasks["publicar"]["fields"][1] != "echo novo"  # original untouched
-    assert tasks["publicar-v2"]["fields"][1] == "echo novo"
+    group = snapshot(app)["groups"]["financeiro"]
+    assert set(group["subs"]) == {"fechamento", "relatórios", "novos"}  # nothing deleted
+    assert group["vars"]["ERP_USER"] == ("rts_novo", False, "")  # file wins
+    assert group["vars"]["ERP_TOKEN"] == ("tok-secreto-123", True, "")  # kept
+    tasks = group["subs"]["fechamento"]["tasks"]
+    assert set(tasks) == {"conciliar", "conciliar-v2", "nova-tarefa"}
+    assert tasks["conciliar"]["fields"][1] != "echo novo"  # original untouched
+    assert tasks["conciliar-v2"]["fields"][1] == "echo novo"
 
 
 def test_rename_group_auto_name_and_collision(app, client, make):
     ids = seed(make)
     content, _ = export(client, scope="group", id=ids["group"]["id"])
-    apply(client, content, resolutions={"group:instagram": {"action": "rename"}})
-    apply(client, content, resolutions={"group:instagram": {"action": "rename"}})
+    apply(client, content, resolutions={"group:financeiro": {"action": "rename"}})
+    apply(client, content, resolutions={"group:financeiro": {"action": "rename"}})
     assert set(snapshot(app)["groups"]) == {
-        "instagram", "instagram (importado)", "instagram (importado 2)",
+        "financeiro", "financeiro (importado)", "financeiro (importado 2)",
     }  # fmt: skip
 
     report = apply(
         client,
         content,
         expect=422,
-        resolutions={"group:instagram": {"action": "rename", "new_name": "INSTAGRAM (importado)"}},
+        resolutions={
+            "group:financeiro": {"action": "rename", "new_name": "FINANCEIRO (importado)"}
+        },
     )
     assert "Já existe" in report["errors"][0]
 
@@ -468,12 +472,16 @@ def test_import_is_atomic(app, client, make, other_app):
 def test_secret_without_value_keeps_existing_value_on_merge(app, client, make):
     ids = seed(make)
     content, _ = export(client, scope="group", id=ids["group"]["id"])  # omit mode
-    plan = preview(client, content, resolutions={"group:instagram": {"action": "overwrite"}})
+    plan = preview(client, content, resolutions={"group:financeiro": {"action": "overwrite"}})
     group_item = plan["items"][0]
-    assert any("mantêm o valor atual: IG_TOKEN" in d for d in group_item["details"])
+    assert any("mantêm o valor atual: ERP_TOKEN" in d for d in group_item["details"])
     assert plan["pending_secrets"] == []
-    apply(client, content, resolutions={"group:instagram": {"action": "overwrite"}})
-    assert snapshot(app)["groups"]["instagram"]["vars"]["IG_TOKEN"] == ("tok-secreto-123", True, "")
+    apply(client, content, resolutions={"group:financeiro": {"action": "overwrite"}})
+    assert snapshot(app)["groups"]["financeiro"]["vars"]["ERP_TOKEN"] == (
+        "tok-secreto-123",
+        True,
+        "",
+    )
 
 
 def test_global_variables_conflict(app, client, make, other_app):
@@ -513,7 +521,7 @@ def test_subcategory_import_into_target_or_new_group(app, client, make, other_ap
 
     report = apply(target_client, content)
     assert [i["action"] for i in report["items"][:2]] == ["create", "create"]
-    assert set(snapshot(target)["groups"]) == {"instagram"}
+    assert set(snapshot(target)["groups"]) == {"financeiro"}
 
     other = target_client.post(f"{API}/groups", json={"name": "relatorios-gerais"}).json()
     apply(target_client, content, target_group_id=other["id"])

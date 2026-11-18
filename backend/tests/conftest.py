@@ -81,13 +81,13 @@ class Factory:
         assert resp.status_code == 201, resp.text
         return resp.json()
 
-    def group(self, name: str = "instagram", **kw) -> dict:
+    def group(self, name: str = "financeiro", **kw) -> dict:
         return self._post("/groups", {"name": name, **kw})
 
-    def subcategory(self, group_id: int, name: str = "postagens", **kw) -> dict:
+    def subcategory(self, group_id: int, name: str = "fechamento", **kw) -> dict:
         return self._post("/subcategories", {"group_id": group_id, "name": name, **kw})
 
-    def task(self, subcategory_id: int, name: str = "publicar", **kw) -> dict:
+    def task(self, subcategory_id: int, name: str = "conciliar", **kw) -> dict:
         payload = {
             "subcategory_id": subcategory_id,
             "name": name,

@@ -12,7 +12,7 @@ const header = {
   exported_at: "2026-11-17T12:00:00Z",
   scope: "group" as const,
   secrets_mode: "encrypted" as const,
-  groups: ["instagram"],
+  groups: ["financeiro"],
   has_settings: false,
 };
 
@@ -33,11 +33,11 @@ function item(partial: Partial<PlanItem> & Pick<PlanItem, "path" | "name" | "kin
 function fakeServer() {
   const calls: { step: string; body: ImportOptions }[] = [];
   const report = (body: ImportOptions, applied = false): ImportReport => {
-    const res = body.resolutions["group:instagram"]?.action ?? "skip";
+    const res = body.resolutions["group:financeiro"]?.action ?? "skip";
     const items: PlanItem[] = [
       item({
-        path: "group:instagram",
-        name: "instagram",
+        path: "group:financeiro",
+        name: "financeiro",
         kind: "group",
         conflict: true,
         resolution: res,
@@ -47,7 +47,7 @@ function fakeServer() {
       }),
     ];
     if (res === "merge") {
-      items.push(item({ path: "group:instagram/sub:novos", name: "novos", kind: "subcategory", depth: 1 }));
+      items.push(item({ path: "group:financeiro/sub:novos", name: "novos", kind: "subcategory", depth: 1 }));
     }
     const passwordOk = body.password ? body.password === "segredo123" : null;
     return {
@@ -92,7 +92,7 @@ describe("ImportWizard", () => {
     expect(await screen.findByText("Cifrados com senha")).toBeInTheDocument();
     const plan = await screen.findByTestId("import-plan");
     expect(within(plan).getByText("já existe; nada abaixo dele será importado")).toBeInTheDocument();
-    expect(within(plan).getByLabelText("Resolução para instagram")).toHaveValue("skip");
+    expect(within(plan).getByLabelText("Resolução para financeiro")).toHaveValue("skip");
     expect(screen.getByRole("button", { name: "Importar" })).toBeDisabled(); // password missing
 
     await user.type(screen.getByLabelText(/Senha da exportação/), "errada");
@@ -101,7 +101,7 @@ describe("ImportWizard", () => {
     await user.type(screen.getByLabelText(/Senha da exportação/), "segredo123");
     expect(await screen.findByText("Senha correta.")).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Resolução para instagram"), "merge");
+    await user.selectOptions(screen.getByLabelText("Resolução para financeiro"), "merge");
     expect(await screen.findByText("novos")).toBeInTheDocument();
     expect(screen.getByTestId("import-summary")).toHaveTextContent("1 a criar · 1 a atualizar");
     expect(screen.getByTestId("import-summary")).toHaveTextContent("tarefas entram pausadas");
@@ -115,7 +115,7 @@ describe("ImportWizard", () => {
     const applied = calls.find((c) => c.step === "apply")!.body;
     expect(applied.password).toBe("segredo123");
     expect(applied.activate_tasks).toBe(true);
-    expect(applied.resolutions).toEqual({ "group:instagram": { action: "merge" } });
+    expect(applied.resolutions).toEqual({ "group:financeiro": { action: "merge" } });
   });
 
   it("shows validation errors from the server", async () => {

@@ -161,7 +161,7 @@ def test_failure_notifies_all_channels_with_log_tail(engine, client, make, db, s
     assert kinds == ["email", "telegram", "webhook"]
     _, to, subject, body, cfg = sent[0]
     assert to == ("ops@empresa.com",) and cfg.host == "smtp.x"
-    assert subject == "[RTS] Falha: instagram / postagens / publicar"
+    assert subject == "[RTS] Falha: financeiro / fechamento / conciliar"
     assert "Código de saída 3." in body and "conectando no banco" in body
     assert sent[1][2] == "bot:1"  # decrypted bot token
     payload = sent[2][2]

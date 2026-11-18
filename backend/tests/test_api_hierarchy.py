@@ -3,8 +3,8 @@ from tests.conftest import API
 
 # --------------------------------------------------------------------------- groups
 def test_group_crud(client, make):
-    g = make.group("instagram", description="Rede social")
-    assert g["is_active"] is True and g["description"] == "Rede social"
+    g = make.group("financeiro", description="Rotinas financeiras")
+    assert g["is_active"] is True and g["description"] == "Rotinas financeiras"
 
     resp = client.patch(f"{API}/groups/{g['id']}", json={"is_active": False, "name": "Insta"})
     assert resp.status_code == 200
@@ -16,8 +16,8 @@ def test_group_crud(client, make):
 
 
 def test_group_name_is_unique_case_insensitive(client, make):
-    make.group("Instagram")
-    resp = client.post(f"{API}/groups", json={"name": "  instagram "})
+    make.group("Financeiro")
+    resp = client.post(f"{API}/groups", json={"name": "  financeiro "})
     assert resp.status_code == 409
     assert "Já existe um grupo" in resp.json()["detail"]
 
@@ -53,14 +53,14 @@ def test_delete_group_cascades(client, make):
 # --------------------------------------------------------------------------- subcategories
 def test_subcategory_crud_and_filters(client, make):
     g1, g2 = make.group("g1"), make.group("g2")
-    s1 = make.subcategory(g1["id"], "postagens")
-    make.subcategory(g2["id"], "postagens")  # same name in another group is fine
+    s1 = make.subcategory(g1["id"], "fechamento")
+    make.subcategory(g2["id"], "fechamento")  # same name in another group is fine
 
     assert len(client.get(f"{API}/subcategories").json()) == 2
     only_g1 = client.get(f"{API}/subcategories", params={"group_id": g1["id"]}).json()
     assert [s["id"] for s in only_g1] == [s1["id"]]
 
-    resp = client.post(f"{API}/subcategories", json={"group_id": g1["id"], "name": "POSTAGENS"})
+    resp = client.post(f"{API}/subcategories", json={"group_id": g1["id"], "name": "FECHAMENTO"})
     assert resp.status_code == 409
 
 

@@ -23,7 +23,7 @@ export function GroupFormPage() {
   const create = useCreateGroup();
   return (
     <>
-      <PageHeader title="Novo grupo" subtitle="Grupos organizam subcategorias e tarefas (ex.: instagram)." />
+      <PageHeader title="Novo grupo" subtitle="Grupos organizam subcategorias e tarefas (ex.: financeiro, infraestrutura)." />
       <Card>
         <EntityForm
           submitLabel="Criar grupo"
