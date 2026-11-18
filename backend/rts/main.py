@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from rts import __version__
-from rts.api.routes import groups, runs, subcategories, system, tasks, variables
+from rts.api.routes import groups, overview, runs, subcategories, system, tasks, variables
 from rts.config import Settings, get_settings
 from rts.db import make_engine, make_session_factory
 from rts.security.crypto import SecretBox, load_secret_key
@@ -91,7 +91,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    for module in (groups, subcategories, tasks, variables, runs, system):
+    for module in (overview, groups, subcategories, tasks, variables, runs, system):
         app.include_router(module.router, prefix=API_PREFIX)
 
     return app

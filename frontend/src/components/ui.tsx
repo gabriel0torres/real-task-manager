@@ -1,0 +1,242 @@
+import { Loader2 } from "lucide-react";
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
+} from "react";
+import { forwardRef, useId } from "react";
+
+export function cx(...classes: (string | false | null | undefined)[]) {
+  return classes.filter(Boolean).join(" ");
+}
+
+type Variant = "primary" | "secondary" | "danger" | "ghost";
+
+const VARIANTS: Record<Variant, string> = {
+  primary: "bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-300",
+  secondary:
+    "bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-400",
+  danger: "bg-white text-red-600 ring-1 ring-inset ring-red-200 hover:bg-red-50 disabled:text-red-300",
+  ghost: "text-slate-600 hover:bg-slate-100 disabled:text-slate-300",
+};
+
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: Variant;
+  size?: "sm" | "md";
+  loading?: boolean;
+  icon?: ReactNode;
+}
+
+export function Button({
+  variant = "secondary",
+  size = "md",
+  loading,
+  icon,
+  className,
+  children,
+  disabled,
+  type = "button",
+  ...rest
+}: ButtonProps) {
+  return (
+    <button
+      type={type}
+      disabled={disabled || loading}
+      className={cx(
+        "inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors disabled:cursor-not-allowed",
+        size === "sm" ? "px-2.5 py-1 text-xs" : "px-3 py-1.5 text-sm",
+        VARIANTS[variant],
+        className,
+      )}
+      {...rest}
+    >
+      {loading ? <Loader2 className="size-4 animate-spin" /> : icon}
+      {children}
+    </button>
+  );
+}
+
+export function Card({
+  title,
+  actions,
+  children,
+  className,
+}: {
+  title?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cx("min-w-0 rounded-lg bg-white shadow-sm ring-1 ring-slate-200", className)}>
+      {(title || actions) && (
+        <header className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+          <div className="flex items-center gap-2">{actions}</div>
+        </header>
+      )}
+      <div className="overflow-x-auto p-4">{children}</div>
+    </section>
+  );
+}
+
+export function PageHeader({
+  title,
+  subtitle,
+  breadcrumb,
+  actions,
+  badge,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  breadcrumb?: ReactNode;
+  actions?: ReactNode;
+  badge?: ReactNode;
+}) {
+  return (
+    <div className="mb-6">
+      {breadcrumb && <div className="mb-1 text-xs text-slate-500">{breadcrumb}</div>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-xl font-semibold text-slate-900">{title}</h1>
+            {badge}
+          </div>
+          {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
+        </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      </div>
+    </div>
+  );
+}
+
+export function Field({
+  label,
+  hint,
+  error,
+  children,
+  htmlFor,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: ReactNode;
+  children: ReactNode;
+  htmlFor?: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-slate-700">
+        {label}
+      </label>
+      {children}
+      {error ? (
+        <p className="text-xs text-red-600">{error}</p>
+      ) : (
+        hint && <p className="text-xs text-slate-500">{hint}</p>
+      )}
+    </div>
+  );
+}
+
+const inputClass =
+  "block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-500";
+
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function Input({ className, ...rest }, ref) {
+    return <input ref={ref} className={cx(inputClass, className)} {...rest} />;
+  },
+);
+
+export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={cx(inputClass, className)} {...rest} />;
+}
+
+export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select className={cx(inputClass, "pr-8", className)} {...rest}>
+      {children}
+    </select>
+  );
+}
+
+export function Checkbox({
+  label,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: ReactNode;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}) {
+  const id = useId();
+  return (
+    <label htmlFor={id} className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+      <input
+        id={id}
+        type="checkbox"
+        className="size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+export function Spinner({ label = "Carregando..." }: { label?: string }) {
+  return (
+    <div className="flex items-center gap-2 py-6 text-sm text-slate-500" role="status">
+      <Loader2 className="size-4 animate-spin" /> {label}
+    </div>
+  );
+}
+
+export function EmptyState({ children }: { children: ReactNode }) {
+  return <p className="py-6 text-center text-sm text-slate-500">{children}</p>;
+}
+
+export function ErrorBox({ error }: { error: unknown }) {
+  if (!error) return null;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    <div className="whitespace-pre-line rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200" role="alert">
+      {message}
+    </div>
+  );
+}
+
+export function Badge({
+  children,
+  tone = "slate",
+  className,
+}: {
+  children: ReactNode;
+  tone?: "slate" | "green" | "red" | "amber" | "blue" | "indigo" | "orange";
+  className?: string;
+}) {
+  const tones = {
+    slate: "bg-slate-100 text-slate-700 ring-slate-200",
+    green: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+    red: "bg-red-50 text-red-700 ring-red-200",
+    amber: "bg-amber-50 text-amber-700 ring-amber-200",
+    blue: "bg-sky-50 text-sky-700 ring-sky-200",
+    indigo: "bg-indigo-50 text-indigo-700 ring-indigo-200",
+    orange: "bg-orange-50 text-orange-700 ring-orange-200",
+  };
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+        tones[tone],
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}

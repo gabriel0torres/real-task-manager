@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from rts import __version__
 from rts.api.deps import SessionDep, SettingsDep
 from rts.scheduling.cron import CronError, get_timezone, next_fire_times, normalize_expression
+from rts.scheduling.describe import describe
 from rts.services.settings import (
     DEFAULT_TIMEZONE,
     bump_config_revision,
@@ -30,6 +31,7 @@ class SchedulePreviewIn(BaseModel):
 class SchedulePreviewOut(BaseModel):
     valid: bool
     error: str | None = None
+    description: str | None = Field(default=None, description="Descrição em português.")
     cron_expressions: list[str] = Field(description="Expressões normalizadas.")
     timezone: str
     next_runs: list[datetime]
@@ -54,7 +56,13 @@ def schedule_preview(data: SchedulePreviewIn, session: SessionDep, settings: Set
             timezone=tz,
             next_runs=[],
         )
-    return SchedulePreviewOut(valid=True, cron_expressions=normalized, timezone=tz, next_runs=runs)
+    return SchedulePreviewOut(
+        valid=True,
+        description=describe(normalized),
+        cron_expressions=normalized,
+        timezone=tz,
+        next_runs=runs,
+    )
 
 
 # --------------------------------------------------------------------------- settings

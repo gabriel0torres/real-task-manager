@@ -48,6 +48,24 @@ alembic upgrade head
 alembic revision --autogenerate -m "descrição"
 ```
 
+## Desenvolvimento (frontend)
+
+Requisitos: Node.js 20+.
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 (encaminha /api para http://127.0.0.1:8000)
+```
+
+Com a API rodando (e o motor, via `rts-worker` ou `RTS_EMBEDDED_WORKER=true`), abra
+http://localhost:5173.
+
+```bash
+npm test           # testes (Vitest + Testing Library)
+npm run build      # build de produção em frontend/dist
+```
+
 ## Variáveis de ambiente
 
 Veja [.env.example](.env.example).

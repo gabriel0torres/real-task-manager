@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from rts.models import Group, Subcategory, Task
 from rts.scheduling.cron import CronError, next_fire_times
+from rts.scheduling.describe import describe
 from rts.schemas.hierarchy import (
     GroupCreate,
     GroupUpdate,
@@ -216,12 +217,20 @@ def task_next_run(task: Task, timezone: str, now: datetime | None = None) -> dat
     return runs[0] if runs else None
 
 
+def _safe_describe(expressions: list[str]) -> str:
+    try:
+        return describe(expressions)
+    except CronError:
+        return "Agendamento inválido"
+
+
 def task_to_out(task: Task, default_timezone: str) -> TaskOut:
     effective_tz = task.timezone or default_timezone
     return TaskOut.model_validate(
         {
             **{c: getattr(task, c) for c in TaskOut.model_fields if hasattr(task, c)},
             "group_id": task.subcategory.group_id,
+            "schedule_description": _safe_describe(task.cron_expressions),
             "effective_timezone": effective_tz,
             "is_effectively_active": task.is_effectively_active,
             "next_run_at": task_next_run(task, effective_tz),

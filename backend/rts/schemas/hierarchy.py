@@ -166,6 +166,7 @@ class TaskOut(ORMModel):
     shell: Shell | None
     working_dir: str | None
     cron_expressions: list[str]
+    schedule_description: str
     timezone: str | None
     effective_timezone: str
     timeout_seconds: int | None
