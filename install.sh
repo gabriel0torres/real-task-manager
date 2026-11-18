@@ -17,6 +17,7 @@ VERSION=latest
 FROM=""
 INSTALL_DIR=""
 PORT=8000
+PORT_SET=0
 ADMIN_PASSWORD=""
 SERVICE=1
 REPO="gabriel0torres/real-task-manager"
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do
         --version) VERSION="$2"; shift 2 ;;
         --from) FROM="$2"; shift 2 ;;
         --dir) INSTALL_DIR="$2"; shift 2 ;;
-        --port) PORT="$2"; shift 2 ;;
+        --port) PORT="$2"; PORT_SET=1; shift 2 ;;
         --admin-password) ADMIN_PASSWORD="$2"; shift 2 ;;
         --no-service) SERVICE=0; shift ;;
         --repo) REPO="$2"; shift 2 ;;
@@ -40,6 +41,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$MODE" in auto|python|standalone) ;; *) fail "--mode deve ser auto, python ou standalone" ;; esac
+case "$PORT" in ''|*[!0-9]*) fail "--port deve ser um número entre 1 e 65535" ;; esac
+[ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || fail "--port deve ser um número entre 1 e 65535"
 
 IS_ROOT=0; [ "$(id -u)" = "0" ] && IS_ROOT=1
 if [ -z "$INSTALL_DIR" ]; then
@@ -108,6 +111,87 @@ if [ $SERVICE = 1 ] && command -v systemctl >/dev/null 2>&1; then
     $SYSTEMCTL stop rts-worker.service rts-api.service 2>/dev/null || true
 fi
 
+# ------------------------------------------------------------------ port
+ENV_FILE="$INSTALL_DIR/.env"
+FRESH=0; [ -f "$ENV_FILE" ] || FRESH=1
+
+port_in_use() {  # PORT - true when anything listens on it (IPv4 or IPv6, any address)
+    hex="$(printf '%04X' "$1")"
+    for table in /proc/net/tcp /proc/net/tcp6; do
+        [ -r "$table" ] || continue
+        # Columns: sl local_address rem_address st ...; state 0A = LISTEN.
+        if awk -v port="$hex" 'NR > 1 && $4 == "0A" { split($2, a, ":"); if (a[2] == port) found = 1 }
+                               END { exit !found }' "$table"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+port_owner() {  # PORT - "name (PID n)" when ss can tell (other users' processes need root)
+    owner=""
+    if command -v ss >/dev/null 2>&1; then
+        owner="$(ss -Hltnp "sport = :$1" 2>/dev/null \
+            | sed -n 's/.*users:(("\([^"]*\)",pid=\([0-9]*\).*/\1 (PID \2)/p' | head -n1)"
+    fi
+    echo "${owner:-outro programa}"
+}
+
+rts_on_port() {  # PORT - true when an RTS API answers there
+    body=""
+    if command -v curl >/dev/null 2>&1; then
+        body="$(curl -fsS --max-time 3 "http://127.0.0.1:$1/api/v1/health" 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+        body="$(wget -qO- -T 3 -t 1 "http://127.0.0.1:$1/api/v1/health" 2>/dev/null || true)"
+    fi
+    printf '%s' "$body" | grep -q '"status": *"ok"' && printf '%s' "$body" | grep -q '"version"'
+}
+
+find_free_port() {  # PORT - first free port among the next 100 (prints nothing if none)
+    p=$(($1 + 1)); last=$(($1 + 100)); [ $last -le 65535 ] || last=65535
+    while [ $p -le $last ]; do
+        if ! port_in_use $p; then echo $p; return 0; fi
+        p=$((p + 1))
+    done
+    return 0
+}
+
+# Port the installation will use: --port on a fresh install (or when passed explicitly),
+# otherwise the one already in .env.
+CURRENT_PORT=""
+if [ $FRESH = 0 ]; then
+    CURRENT_PORT="$(sed -n 's/^RTS_PORT=//p' "$ENV_FILE" | tail -n1 | tr -d ' \r')"
+    case "$CURRENT_PORT" in ''|*[!0-9]*) CURRENT_PORT=8000 ;; esac
+fi
+if [ $FRESH = 1 ] || [ $PORT_SET = 1 ]; then WANTED_PORT=$PORT; else WANTED_PORT=$CURRENT_PORT; fi
+EFFECTIVE_PORT=$WANTED_PORT
+
+BUSY=0; port_in_use "$WANTED_PORT" && BUSY=1
+if [ $BUSY = 1 ] && [ $FRESH = 0 ] && [ "$WANTED_PORT" = "$CURRENT_PORT" ]; then
+    # Upgrade: the RTS stopped above may take a moment to release the port...
+    i=0
+    while [ $BUSY = 1 ] && [ $i -lt 5 ]; do
+        sleep 1; i=$((i + 1)); port_in_use "$WANTED_PORT" || BUSY=0
+    done
+    # ...or it is this same installation still running (e.g. started by hand): keep the port.
+    if [ $BUSY = 1 ] && rts_on_port "$WANTED_PORT"; then
+        warn "O RTS desta instalação está em execução na porta $WANTED_PORT; a porta será mantida. Reinicie-o depois para usar a nova versão."
+        BUSY=0
+    fi
+fi
+if [ $BUSY = 1 ]; then
+    OWNER="$(port_owner "$WANTED_PORT")"
+    FREE="$(find_free_port "$WANTED_PORT")"
+    if [ $PORT_SET = 1 ]; then
+        if [ -n "$FREE" ]; then HINT=" Escolha outra, por exemplo: --port $FREE"; else HINT=" Escolha outra com --port."; fi
+        fail "a porta $WANTED_PORT já está em uso ($OWNER).$HINT"
+    fi
+    [ -n "$FREE" ] || fail "a porta $WANTED_PORT e as 100 seguintes estão em uso. Escolha uma livre com --port."
+    warn "A porta $WANTED_PORT já está em uso ($OWNER); o RTS usará a porta $FREE."
+    EFFECTIVE_PORT=$FREE
+fi
+info "Porta da interface web: $EFFECTIVE_PORT"
+
 mkdir -p "$INSTALL_DIR"
 
 # ------------------------------------------------------------------ install
@@ -135,26 +219,7 @@ fi
 [ -x "$RUNNER" ] || fail "executável não encontrado após a instalação: $RUNNER"
 
 # ------------------------------------------------------------------ configuration
-ENV_FILE="$INSTALL_DIR/.env"
 GENERATED=""
-FRESH=0
-if [ ! -f "$ENV_FILE" ]; then
-    FRESH=1
-    cat > "$ENV_FILE" <<EOF
-# Configuração do Real Task Scheduler (veja o README para todas as opções)
-RTS_DATA_DIR=$INSTALL_DIR/data
-RTS_PORT=$PORT
-RTS_ADMIN_USERNAME=admin
-RTS_DEFAULT_TIMEZONE=America/Sao_Paulo
-# RTS_DATABASE_URL=postgresql+psycopg://usuario:senha@host:5432/rts
-# RTS_PUBLIC_URL=http://servidor:$PORT
-EOF
-    chmod 600 "$ENV_FILE"
-    info "Configuração criada em $ENV_FILE"
-else
-    info "Mantendo a configuração existente em $ENV_FILE"
-fi
-
 set_env_value() {  # KEY VALUE - replace/append a line in .env (empty value removes the key)
     tmp="$ENV_FILE.tmp"
     grep -v "^$1=" "$ENV_FILE" > "$tmp" || true
@@ -162,6 +227,25 @@ set_env_value() {  # KEY VALUE - replace/append a line in .env (empty value remo
     cat "$tmp" > "$ENV_FILE"   # keeps owner and permissions of .env
     rm -f "$tmp"
 }
+if [ $FRESH = 1 ]; then
+    cat > "$ENV_FILE" <<EOF
+# Configuração do Real Task Scheduler (veja o README para todas as opções)
+RTS_DATA_DIR=$INSTALL_DIR/data
+RTS_PORT=$EFFECTIVE_PORT
+RTS_ADMIN_USERNAME=admin
+RTS_DEFAULT_TIMEZONE=America/Sao_Paulo
+# RTS_DATABASE_URL=postgresql+psycopg://usuario:senha@host:5432/rts
+# RTS_PUBLIC_URL=http://servidor:$EFFECTIVE_PORT
+EOF
+    chmod 600 "$ENV_FILE"
+    info "Configuração criada em $ENV_FILE"
+else
+    info "Mantendo a configuração existente em $ENV_FILE"
+    if [ "$EFFECTIVE_PORT" != "$CURRENT_PORT" ]; then
+        set_env_value RTS_PORT "$EFFECTIVE_PORT"
+        info "Porta alterada de $CURRENT_PORT para $EFFECTIVE_PORT em $ENV_FILE"
+    fi
+fi
 set_env_value RTS_INSTALL_TYPE "$MODE"
 
 # Updater used by "Atualizar" in the web interface: started by rts-update.service when
@@ -307,12 +391,17 @@ fi
 if [ $SERVICE_OK = 0 ]; then set_env_value RTS_UPDATER ""; fi
 
 # ------------------------------------------------------------------ summary
-URL="http://localhost:$PORT"
+URL="http://localhost:$EFFECTIVE_PORT"
 if [ $SERVICE_OK = 1 ]; then
     info "Aguardando o RTS responder em $URL ..."
     i=0
-    until fetch "$URL/api/v1/health" /dev/null 2>/dev/null; do
-        i=$((i + 1)); [ $i -ge 60 ] && { warn "o RTS ainda não respondeu; veja: journalctl -u rts-api"; break; }
+    until rts_on_port "$EFFECTIVE_PORT"; do
+        i=$((i + 1))
+        if [ $i -ge 60 ]; then
+            warn "o RTS ainda não respondeu na porta $EFFECTIVE_PORT; veja: journalctl -u rts-api"
+            warn "se a porta foi ocupada por outro programa, troque RTS_PORT em $ENV_FILE e reinicie rts-api"
+            break
+        fi
         sleep 1
     done
 fi

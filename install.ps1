@@ -23,7 +23,7 @@ param(
     [string] $Version = "latest",
     [string] $From = "",
     [string] $InstallDir = "",
-    [int] $Port = 8000,
+    [ValidateRange(1, 65535)] [int] $Port = 8000,
     [string] $AdminPassword = "",
     [switch] $NoService,
     [string] $Repo = "gabriel0torres/real-task-manager"
@@ -95,7 +95,7 @@ function Get-Artifact([string] $pattern) {
 
 # ------------------------------------------------------------------ stop running instance
 $Tasks = @("RTS API", "RTS Worker")
-if ($IsAdmin) {
+if ($IsAdmin -and -not $NoService) {
     foreach ($t in $Tasks) {
         if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
             Info "Parando a tarefa agendada '$t' para atualizar..."
@@ -104,6 +104,96 @@ if ($IsAdmin) {
     }
     Start-Sleep -Seconds 2
 }
+
+# ------------------------------------------------------------------ port
+$EnvFile = Join-Path $InstallDir ".env"
+$FreshInstall = -not (Test-Path $EnvFile)
+
+function Set-EnvValue([string] $key, [string] $value) {
+    # Replace (or append) "KEY=value" in .env, keeping everything else as is.
+    $lines = @(Get-Content -Path $EnvFile -Encoding UTF8 | Where-Object { $_ -notmatch "^$key=" })
+    if ($value) { $lines += "$key=$value" }
+    [IO.File]::WriteAllText($EnvFile, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
+}
+
+function Get-EnvValue([string] $key) {
+    if (-not (Test-Path $EnvFile)) { return "" }
+    $line = Get-Content -Path $EnvFile -Encoding UTF8 | Where-Object { $_ -match "^$key=" } | Select-Object -Last 1
+    if ($line) { return ($line -replace "^$key=", "").Trim() }
+    return ""
+}
+
+function Test-PortInUse([int] $p) {
+    # Any listener (IPv4 or IPv6, any address) conflicts with the API, which binds 0.0.0.0.
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        if (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) { return $true }
+    }
+    # Also catches ports reserved by Windows (Hyper-V/WSL "excluded port ranges"), which have
+    # no listener but cannot be bound. Loopback only, so the firewall never prompts.
+    $listener = New-Object Net.Sockets.TcpListener ([Net.IPAddress]::Loopback, $p)
+    try { $listener.Start(); return $false } catch { return $true } finally { try { $listener.Stop() } catch { } }
+}
+
+function Get-PortOwner([int] $p) {
+    if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) { return "outro programa" }
+    $conn = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($conn) {
+        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+        if ($proc) { return "$($proc.ProcessName) (PID $($conn.OwningProcess))" }
+        return "PID $($conn.OwningProcess)"
+    }
+    return "reservada pelo Windows"
+}
+
+function Test-RtsOnPort([int] $p) {
+    try {
+        $h = Invoke-RestMethod "http://127.0.0.1:$p/api/v1/health" -TimeoutSec 3
+        return ($h.status -eq "ok" -and $h.version)
+    } catch { return $false }
+}
+
+function Find-FreePort([int] $start) {
+    for ($p = $start + 1; $p -le [Math]::Min($start + 100, 65535); $p++) {
+        if (-not (Test-PortInUse $p)) { return $p }
+    }
+    return 0
+}
+
+# Port the installation will use: -Port on a fresh install (or when passed explicitly),
+# otherwise the one already in .env.
+$PortExplicit = $PSBoundParameters.ContainsKey("Port")
+$CurrentPort = 0
+if (-not $FreshInstall) {
+    [void] [int]::TryParse((Get-EnvValue "RTS_PORT"), [ref] $CurrentPort)
+    if (-not $CurrentPort) { $CurrentPort = 8000 }
+}
+$WantedPort = if ($FreshInstall -or $PortExplicit) { $Port } else { $CurrentPort }
+$EffectivePort = $WantedPort
+
+$busy = Test-PortInUse $WantedPort
+if ($busy -and -not $FreshInstall -and $WantedPort -eq $CurrentPort) {
+    # Upgrade: the RTS stopped above may take a moment to release the port...
+    for ($i = 0; $busy -and $i -lt 5; $i++) { Start-Sleep 1; $busy = Test-PortInUse $WantedPort }
+    # ...or it is this same installation still running (started by hand, or a scheduled task
+    # this non-admin session cannot stop). Windows locks the files of a running program, so
+    # the upgrade would fail halfway: stop here instead.
+    if ($busy -and (Test-RtsOnPort $WantedPort)) {
+        Fail ("O RTS desta instalação está em execução na porta $WantedPort ($(Get-PortOwner $WantedPort)). " +
+              "Feche-o (ou, como Administrador: Stop-ScheduledTask 'RTS API','RTS Worker') e rode o instalador de novo.")
+    }
+}
+if ($busy) {
+    $owner = Get-PortOwner $WantedPort
+    $free = Find-FreePort $WantedPort
+    if ($PortExplicit) {
+        $hint = if ($free) { " Escolha outra, por exemplo: -Port $free" } else { " Escolha outra com -Port." }
+        Fail "A porta $WantedPort já está em uso ($owner).$hint"
+    }
+    if (-not $free) { Fail "A porta $WantedPort e as 100 seguintes estão em uso. Escolha uma livre com -Port." }
+    Warn "A porta $WantedPort já está em uso ($owner); o RTS usará a porta $free."
+    $EffectivePort = $free
+}
+Info "Porta da interface web: $EffectivePort"
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
@@ -118,17 +208,22 @@ if ($Mode -eq "python") {
     }
     $vpy = Join-Path $venv "Scripts\python.exe"
     Info "Instalando o pacote (pode levar alguns minutos)..."
+    $pipHint = " Se o RTS estiver em execução (por exemplo com 'rts.cmd start'), feche-o e rode o instalador de novo."
     & $vpy -m pip install --upgrade --quiet --disable-pip-version-check pip
     & $vpy -m pip install --upgrade --force-reinstall --no-deps --quiet --disable-pip-version-check "$wheel"
+    if ($LASTEXITCODE) { Fail "Falha na instalação do pacote.$pipHint" }
     & $vpy -m pip install --quiet --disable-pip-version-check "$wheel[postgres]"
-    if ($LASTEXITCODE) { Fail "Falha na instalação do pacote." }
+    if ($LASTEXITCODE) { Fail "Falha na instalação das dependências.$pipHint" }
     $Runner = Join-Path $venv "Scripts\rts.exe"
     $other = Join-Path $InstallDir "app"
     if (Test-Path $other) { Remove-Item -Recurse -Force $other }
 } else {
     $zip = Get-Artifact "rts-*-windows-$Arch.zip"
     $app = Join-Path $InstallDir "app"
-    if (Test-Path $app) { Remove-Item -Recurse -Force $app }
+    if (Test-Path $app) {
+        try { Remove-Item -Recurse -Force $app }
+        catch { Fail "Não foi possível substituir $app (o RTS está em execução?). Feche-o e rode o instalador de novo. ($_)" }
+    }
     Info "Extraindo o executável..."
     Expand-Archive -Path $zip -DestinationPath $app -Force
     $Runner = Join-Path $app "rts\rts.exe"
@@ -136,33 +231,29 @@ if ($Mode -eq "python") {
 if (-not (Test-Path $Runner)) { Fail "Executável não encontrado após a instalação: $Runner" }
 
 # ------------------------------------------------------------------ configuration
-$EnvFile = Join-Path $InstallDir ".env"
 $GeneratedPassword = $null
-$FreshInstall = -not (Test-Path $EnvFile)
 if ($FreshInstall) {
     $dataDir = Join-Path $InstallDir "data"
     $content = @"
 # Configuração do Real Task Scheduler (veja o README para todas as opções)
 RTS_DATA_DIR=$dataDir
-RTS_PORT=$Port
+RTS_PORT=$EffectivePort
 RTS_ADMIN_USERNAME=admin
 RTS_DEFAULT_TIMEZONE=America/Sao_Paulo
 # RTS_DATABASE_URL=postgresql+psycopg://usuario:senha@host:5432/rts
-# RTS_PUBLIC_URL=http://servidor:$Port
+# RTS_PUBLIC_URL=http://servidor:$EffectivePort
 "@
     # UTF-8 without BOM (Windows PowerShell 5.1 would add one with Set-Content -Encoding UTF8).
     [IO.File]::WriteAllText($EnvFile, $content, (New-Object Text.UTF8Encoding $false))
     Info "Configuração criada em $EnvFile"
 } else {
     Info "Mantendo a configuração existente em $EnvFile"
+    if ($EffectivePort -ne $CurrentPort) {
+        Set-EnvValue "RTS_PORT" "$EffectivePort"
+        Info "Porta alterada de $CurrentPort para $EffectivePort em $EnvFile"
+    }
 }
 
-function Set-EnvValue([string] $key, [string] $value) {
-    # Replace (or append) "KEY=value" in .env, keeping everything else as is.
-    $lines = @(Get-Content -Path $EnvFile -Encoding UTF8 | Where-Object { $_ -notmatch "^$key=" })
-    if ($value) { $lines += "$key=$value" }
-    [IO.File]::WriteAllText($EnvFile, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
-}
 Set-EnvValue "RTS_INSTALL_TYPE" $Mode
 
 # Updater used by "Atualizar" in the web interface. It runs from the scheduled task
@@ -285,14 +376,18 @@ if (-not $NoService) {
 if (-not $ServiceOk) { Set-EnvValue "RTS_UPDATER" "" }
 
 # ------------------------------------------------------------------ summary
-$url = "http://localhost:$Port"
+$url = "http://localhost:$EffectivePort"
 if ($ServiceOk) {
     Info "Aguardando o RTS responder em $url ..."
     $up = $false
     for ($i = 0; $i -lt 60; $i++) {
-        try { Invoke-RestMethod "$url/api/v1/health" -TimeoutSec 2 | Out-Null; $up = $true; break } catch { Start-Sleep 1 }
+        if (Test-RtsOnPort $EffectivePort) { $up = $true; break }
+        Start-Sleep 1
     }
-    if (-not $up) { Warn "O RTS ainda não respondeu. Veja os logs com: `"$wrapper`" api" }
+    if (-not $up) {
+        Warn ("O RTS ainda não respondeu na porta $EffectivePort. Veja os logs com: `"$wrapper`" api`n" +
+              "       Se a porta foi ocupada por outro programa, troque RTS_PORT em $EnvFile e reinicie a tarefa 'RTS API'.")
+    }
 }
 
 Write-Host ""

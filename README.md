@@ -48,6 +48,18 @@ instalador escolhe sozinho o formato:
 Os arquivos vêm da [última Release do GitHub](https://github.com/gabriel0torres/real-task-manager/releases)
 (veja [Publicar uma versão](#publicar-uma-versão)).
 
+**Porta da interface web.** O padrão é `8000`. Antes de instalar, o instalador verifica se a
+porta já está em uso por outro programa:
+
+- sem `-Port`/`--port`: escolhe a próxima porta livre (8001, 8002...) e avisa qual usou;
+- com `-Port`/`--port`: para com erro, mostra quem ocupa a porta e sugere uma livre;
+- ao atualizar, mantém a porta de `RTS_PORT` no `.env`. Se outro programa a tiver ocupado,
+  troca para a próxima livre e grava a nova no `.env`. Passar `-Port`/`--port` numa
+  atualização muda a porta.
+
+O endereço final aparece no resumo da instalação. Para trocar depois, edite `RTS_PORT` no `.env`
+e reinicie a API.
+
 ### Windows
 
 No **PowerShell como Administrador** (para registrar a inicialização automática):
