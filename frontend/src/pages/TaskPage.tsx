@@ -1,4 +1,4 @@
-import { Pause, Pencil, Play, Trash2 } from "lucide-react";
+import { Copy, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -158,6 +158,9 @@ export function TaskPage() {
             </Button>
             <Link to={`/tasks/${task.id}/edit`}>
               <Button icon={<Pencil className="size-4" />}>Editar</Button>
+            </Link>
+            <Link to={`/tasks/new?subcategoryId=${task.subcategory_id}&copyFrom=${task.id}`}>
+              <Button icon={<Copy className="size-4" />}>Duplicar</Button>
             </Link>
             <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={handleDelete}>
               Excluir

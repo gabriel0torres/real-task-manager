@@ -189,6 +189,10 @@ class TaskCreate(_TaskFields):
     overlap_policy: OverlapPolicy = OverlapPolicy.SKIP
     misfire_policy: MisfirePolicy = MisfirePolicy.IGNORE
     is_active: bool = True
+    copy_variables_from: int | None = Field(
+        default=None,
+        description="Copia as variáveis próprias desta tarefa (inclusive segredos) para a nova.",
+    )
 
 
 class TaskUpdate(_TaskFields):

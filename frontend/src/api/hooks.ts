@@ -116,11 +116,12 @@ export const useSystemInfo = () =>
     staleTime: Infinity,
   });
 
-export const useVariables =(scope: VariableScope, ownerId: number | null) =>
+export const useVariables = (scope: VariableScope, ownerId: number | null, enabled = true) =>
   useQuery({
     queryKey: ["variables", scope, ownerId],
     queryFn: () =>
       api.get<Variable[]>(`/variables${query({ scope, owner_id: ownerId ?? undefined })}`),
+    enabled,
   });
 
 export interface RunFilters {
@@ -219,7 +220,10 @@ export const useDeleteSubcategory = () =>
   useApiMutation((id: number) => api.del(`/subcategories/${id}`));
 
 export const useCreateTask = () =>
-  useApiMutation((data: TaskInput) => api.post<Task>("/tasks", data));
+  useApiMutation(
+    // copy_variables_from: also copy that task's own variables (secrets included, server-side).
+    (data: TaskInput & { copy_variables_from?: number }) => api.post<Task>("/tasks", data),
+  );
 export const useUpdateTask = () =>
   useApiMutation(({ id, ...data }: Partial<TaskInput> & { id: number }) =>
     api.patch<Task>(`/tasks/${id}`, data),

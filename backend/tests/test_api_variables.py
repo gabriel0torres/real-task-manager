@@ -159,3 +159,38 @@ def test_deleting_task_removes_its_variables(client, make):
     make.variable("task", "T", "1", owner_id=t["id"])
     client.delete(f"{API}/tasks/{t['id']}")
     assert [v["key"] for v in client.get(f"{API}/variables").json()] == ["G"]
+
+
+def test_new_task_can_copy_the_variables_of_another(client, make, app, db):
+    g, s, source = make.tree()
+    other = make.subcategory(g["id"], "outra")
+    make.variable("task", "EMPRESA", "nacional", owner_id=source["id"], description="filial")
+    make.variable("task", "SENHA", "s3gredo", owner_id=source["id"], is_secret=True)
+
+    copy = make.task(other["id"], "copia", copy_variables_from=source["id"])
+    own = {
+        v["key"]: v
+        for v in client.get(
+            f"{API}/variables", params={"scope": "task", "owner_id": copy["id"]}
+        ).json()
+    }
+    assert set(own) == {"EMPRESA", "SENHA"}
+    assert own["EMPRESA"]["value"] == "nacional" and own["EMPRESA"]["description"] == "filial"
+    assert own["SENHA"]["is_secret"] and own["SENHA"]["has_value"]
+    # The copied secret decrypts to the same value when the task runs.
+    resolved = build_task_environment(db, app.state.secret_box, get_task(db, copy["id"]))
+    assert resolved.env["SENHA"] == "s3gredo" and resolved.env["EMPRESA"] == "nacional"
+    # The source keeps its variables.
+    src = client.get(f"{API}/variables", params={"scope": "task", "owner_id": source["id"]})
+    assert len(src.json()) == 2
+
+    bad = client.post(
+        f"{API}/tasks",
+        json={
+            "subcategory_id": s["id"],
+            "name": "x",
+            "command": "echo",
+            "copy_variables_from": 999,
+        },
+    )
+    assert bad.status_code == 422 and "999" in bad.json()["detail"]

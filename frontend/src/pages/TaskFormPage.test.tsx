@@ -51,8 +51,13 @@ function task(overrides: Partial<Task>): Task {
   };
 }
 
-function setup(current: Task, inherited: InheritedSchedule = FROM_GROUP) {
+function setup(
+  current: Task,
+  inherited: InheritedSchedule = FROM_GROUP,
+  { route = "/tasks/5/edit", extra = {} }: { route?: string; extra?: Parameters<typeof mockApi>[0] } = {},
+) {
   const api = mockApi({
+    ...extra,
     "GET /tasks/5": () => current,
     "PATCH /tasks/5": (init) => ({ ...current, ...JSON.parse(String(init?.body)) }),
     "GET /subcategories/1": () => ({
@@ -93,9 +98,10 @@ function setup(current: Task, inherited: InheritedSchedule = FROM_GROUP) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/tasks/5/edit"]}>
+      <MemoryRouter initialEntries={[route]}>
         <ToastProvider>
           <Routes>
+            <Route path="/tasks/new" element={<TaskFormPage />} />
             <Route path="/tasks/:taskId/edit" element={<TaskFormPage />} />
             <Route path="/tasks/:taskId" element={<p>página da tarefa</p>} />
           </Routes>
@@ -171,5 +177,81 @@ describe("TaskFormPage schedule origin", () => {
         "Nem a subcategoria Cliente X nem o grupo Clientes têm um agendamento padrão",
       ),
     );
+  });
+});
+
+describe("TaskFormPage copy from another task", () => {
+  const TREE = [
+    {
+      id: 7,
+      name: "Clientes",
+      is_active: true,
+      has_failure: false,
+      subcategories: [
+        { id: 1, name: "Cliente X", is_active: true, is_effectively_active: true, has_failure: false, tasks: [{ id: 5, name: "conciliacao" }] },
+      ],
+    },
+  ];
+  const VARIABLES = [
+    { id: 1, scope: "task", owner_id: 5, key: "EMPRESA", value: "nacional", is_secret: false, has_value: true },
+    { id: 2, scope: "task", owner_id: 5, key: "SENHA", value: null, is_secret: true, has_value: true },
+  ];
+
+  it("prefills the form from ?copyFrom and copies the variables on create", async () => {
+    const api = setup(task({ working_dir: "C:/robos", timeout_seconds: 600 }), FROM_GROUP, {
+      route: "/tasks/new?subcategoryId=1&copyFrom=5",
+      extra: {
+        "GET /tree": () => TREE,
+        "GET /variables": () => VARIABLES,
+        "GET /subcategories/1/effective-variables": () => [],
+        "POST /tasks": (init) => ({ ...task({}), id: 9, ...JSON.parse(String(init?.body)) }),
+      },
+    });
+    const user = userEvent.setup();
+
+    expect(await screen.findByLabelText("Nome")).toHaveValue("conciliacao (cópia)");
+    expect(screen.getByLabelText("Diretório de trabalho")).toHaveValue("C:/robos");
+    // The picker shows the source once the task list (tree) has loaded.
+    await waitFor(() => expect(screen.getByLabelText("Copiar de outra tarefa (opcional)")).toHaveValue("5"));
+    const copyVars = await screen.findByRole("checkbox", { name: "Copiar também as variáveis da tarefa (2)" });
+    expect(copyVars).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Criar tarefa" }));
+    await screen.findByText("página da tarefa");
+    expect(bodyOf(api, "POST /tasks")).toMatchObject({
+      name: "conciliacao (cópia)",
+      subcategory_id: 1,
+      command: "echo ok",
+      working_dir: "C:/robos",
+      timeout_seconds: 600,
+      schedule_mode: "own",
+      cron_expressions: ["0 14 * * *"],
+      copy_variables_from: 5,
+    });
+  });
+
+  it("starts blank and copies only when a task is picked; variables can be left out", async () => {
+    const api = setup(task({}), FROM_GROUP, {
+      route: "/tasks/new?subcategoryId=1",
+      extra: {
+        "GET /tree": () => TREE,
+        "GET /variables": () => VARIABLES,
+        "GET /subcategories/1/effective-variables": () => [],
+        "POST /tasks": (init) => ({ ...task({}), id: 9, ...JSON.parse(String(init?.body)) }),
+      },
+    });
+    const user = userEvent.setup();
+    expect(await screen.findByLabelText("Nome")).toHaveValue("");
+
+    await user.selectOptions(await screen.findByLabelText("Copiar de outra tarefa (opcional)"), "5");
+    expect(await screen.findByLabelText("Nome")).toHaveValue("conciliacao (cópia)");
+    await user.click(await screen.findByRole("checkbox", { name: /Copiar também as variáveis/ }));
+    await user.clear(screen.getByLabelText("Nome"));
+    await user.type(screen.getByLabelText("Nome"), "nova");
+    await user.click(screen.getByRole("button", { name: "Criar tarefa" }));
+    await screen.findByText("página da tarefa");
+    const body = bodyOf(api, "POST /tasks") as Record<string, unknown>;
+    expect(body.name).toBe("nova");
+    expect(body).not.toHaveProperty("copy_variables_from");
   });
 });

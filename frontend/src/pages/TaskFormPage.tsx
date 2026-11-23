@@ -5,6 +5,8 @@ import {
   useAvailableVariables,
   useCreateTask,
   useGroup,
+  useTree,
+  useVariables,
   useSettings,
   useSubcategory,
   useSystemInfo,
@@ -144,6 +146,72 @@ function InheritedSchedulePanel({
         />
       </div>
     </div>
+  );
+}
+
+/** The task being copied, adapted to the target subcategory. */
+function copiedTask(source: Task, sub: Subcategory): TaskInput {
+  const sameSubcategory = source.subcategory_id === sub.id;
+  return {
+    ...toInput(source),
+    subcategory_id: sub.id,
+    // Names are unique per subcategory.
+    name: sameSubcategory ? `${source.name} (cópia)`.slice(0, 100) : source.name,
+  };
+}
+
+function CopyFromPicker({
+  value,
+  onChange,
+  variableCount,
+  copyVariables,
+  onCopyVariables,
+}: {
+  value: number;
+  onChange: (taskId: number) => void;
+  variableCount: number;
+  copyVariables: boolean;
+  onCopyVariables: (copy: boolean) => void;
+}) {
+  const { data: tree } = useTree();
+  return (
+    <Card>
+      <div className="space-y-2">
+        <Field
+          label="Copiar de outra tarefa (opcional)"
+          htmlFor="task-copy-from"
+          hint="Preenche o formulário com os dados da tarefa escolhida. Revise o nome antes de salvar."
+        >
+          <Select
+            id="task-copy-from"
+            value={value || ""}
+            onChange={(e) => onChange(Number(e.target.value) || 0)}
+          >
+            <option value="">Não copiar (começar em branco)</option>
+            {(tree ?? []).flatMap((group) =>
+              group.subcategories
+                .filter((s) => s.tasks.length > 0)
+                .map((s) => (
+                  <optgroup key={s.id} label={`${group.name} / ${s.name}`}>
+                    {s.tasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )),
+            )}
+          </Select>
+        </Field>
+        {value > 0 && variableCount > 0 && (
+          <Checkbox
+            label={`Copiar também as variáveis da tarefa (${variableCount})`}
+            checked={copyVariables}
+            onChange={onCopyVariables}
+          />
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -515,10 +583,17 @@ export function TaskFormPage() {
   const { data: systemInfo } = useSystemInfo();
   const create = useCreateTask();
   const update = useUpdateTask();
+  // "Copiar de outra tarefa": ?copyFrom=<id> (button "Duplicar") or the picker.
+  const [copyFrom, setCopyFrom] = useState(() => (taskId ? 0 : Number(search.get("copyFrom")) || 0));
+  const [copyVariables, setCopyVariables] = useState(true);
+  const { data: source, isLoading: sourceLoading } = useTask(copyFrom);
+  const { data: sourceVariables } = useVariables("task", copyFrom, copyFrom > 0);
 
   if (taskId && isLoading) return <Spinner />;
   if (!subcategoryId) return <ErrorBox error="Informe a subcategoria (subcategoryId)." />;
   if (!settings || !systemInfo || !sub) return <Spinner />;
+  const copying = copyFrom > 0 && source?.id === copyFrom;
+  const variableCount = copying ? (sourceVariables?.length ?? 0) : 0;
 
   const handleSubmit = (data: TaskInput) => {
     if (task) {
@@ -533,7 +608,8 @@ export function TaskFormPage() {
         },
       );
     } else {
-      create.mutate(data, {
+      const copy = copying && copyVariables && variableCount > 0 ? { copy_variables_from: copyFrom } : {};
+      create.mutate({ ...data, ...copy }, {
         onSuccess: (created) => {
           toast.success(`Tarefa ${created.name} criada.`);
           navigate(`/tasks/${created.id}`);
@@ -555,18 +631,33 @@ export function TaskFormPage() {
         }
         title={task ? `Editar: ${task.name}` : "Nova tarefa"}
       />
-      <TaskForm
-        key={`${task?.updated_at ?? "new"}-${sub.id}`}
-        taskId={task?.id ?? 0}
-        systemInfo={systemInfo}
-        initial={task ? toInput(task) : emptyTask(sub)}
-        sub={sub}
-        groupName={group?.name ?? ""}
-        defaultTimezone={settings.default_timezone}
-        busy={create.isPending || update.isPending}
-        submitLabel={task ? "Salvar alterações" : "Criar tarefa"}
-        onSubmit={handleSubmit}
-      />
+      {!task && (
+        <div className="mb-6">
+          <CopyFromPicker
+            value={copyFrom}
+            onChange={setCopyFrom}
+            variableCount={variableCount}
+            copyVariables={copyVariables}
+            onCopyVariables={setCopyVariables}
+          />
+        </div>
+      )}
+      {copyFrom > 0 && sourceLoading ? (
+        <Spinner label="Carregando a tarefa a copiar..." />
+      ) : (
+        <TaskForm
+          key={`${task?.updated_at ?? "new"}-${sub.id}-${copying ? copyFrom : 0}`}
+          taskId={task?.id ?? 0}
+          systemInfo={systemInfo}
+          initial={task ? toInput(task) : copying ? copiedTask(source, sub) : emptyTask(sub)}
+          sub={sub}
+          groupName={group?.name ?? ""}
+          defaultTimezone={settings.default_timezone}
+          busy={create.isPending || update.isPending}
+          submitLabel={task ? "Salvar alterações" : "Criar tarefa"}
+          onSubmit={handleSubmit}
+        />
+      )}
     </>
   );
 }

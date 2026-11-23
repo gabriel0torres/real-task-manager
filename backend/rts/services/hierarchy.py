@@ -8,7 +8,15 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, object_session, selectinload
 
-from rts.models import EffectiveSchedule, Group, ScheduleMode, Subcategory, Task
+from rts.models import (
+    EffectiveSchedule,
+    Group,
+    ScheduleMode,
+    Subcategory,
+    Task,
+    Variable,
+    VariableScope,
+)
 from rts.scheduling.cron import CronError, next_fire_times
 from rts.scheduling.describe import describe
 from rts.schemas.hierarchy import (
@@ -188,16 +196,39 @@ def _default_mode(crons: list[str]) -> ScheduleMode:
 def create_task(session: Session, data: TaskCreate) -> Task:
     get_subcategory(session, data.subcategory_id)
     _ensure_task_name_free(session, data.subcategory_id, data.name)
-    values = data.model_dump()
+    values = data.model_dump(exclude={"copy_variables_from"})
     values["schedule_mode"] = values["schedule_mode"] or _default_mode(values["cron_expressions"])
     if values["schedule_mode"] is ScheduleMode.OWN and not values["cron_expressions"]:
         raise InvalidInputError(OWN_SCHEDULE_REQUIRED)
+    source = None
+    if data.copy_variables_from is not None:
+        source = session.get(Task, data.copy_variables_from)
+        if source is None:
+            raise InvalidInputError(f"Tarefa de origem {data.copy_variables_from} não encontrada.")
     task = Task(**values)
     session.add(task)
     bump_config_revision(session)
     session.flush()
+    if source is not None:
+        _copy_task_variables(session, source, task)
     session.refresh(task)
     return task
+
+
+def _copy_task_variables(session: Session, source: Task, target: Task) -> None:
+    """Copy the source task's own variables. Secrets keep their encrypted value (same key)."""
+    for var in source.variables:
+        session.add(
+            Variable(
+                scope=VariableScope.TASK,
+                task_id=target.id,
+                key=var.key,
+                value=var.value,
+                is_secret=var.is_secret,
+                description=var.description,
+            )
+        )
+    session.flush()
 
 
 def update_task(session: Session, task_id: int, data: TaskUpdate) -> Task:
