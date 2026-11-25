@@ -84,6 +84,9 @@ export interface Task {
   /** Position (1..) in the subcategory's sequence; null when not run in sequence. */
   sequence_step: number | null;
   sequence_total: number | null;
+  /** Run to interrupt: running first, else the newest waiting one. */
+  active_run_id?: number | null;
+  active_run_status?: RunStatus | null;
   effective_timezone: string;
   timeout_seconds: number | null;
   max_retries: number;
@@ -193,6 +196,35 @@ export interface SequenceRun {
   total_steps: number;
   completed_steps: number;
   steps: SequenceStep[];
+}
+
+export interface ExecutionEntry {
+  kind: "sequence" | "round";
+  sequence_id: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  status: "success" | "failed" | "cancelled" | "running";
+  succeeded: number;
+  total: number;
+}
+
+export interface SubcategoryExecutionTime {
+  subcategory_id: number;
+  name: string;
+  execution_mode: ExecutionMode;
+  running: ExecutionEntry | null;
+  /** Last finished execution. */
+  last: ExecutionEntry | null;
+  average_ms: number | null;
+  average_of: number;
+}
+
+export interface GroupExecutionTimes {
+  group_id: number;
+  subcategories: SubcategoryExecutionTime[];
+  total_last_ms: number;
+  activity: { running_sequences: number; running_runs: number; waiting_runs: number };
 }
 
 export interface RunPage {

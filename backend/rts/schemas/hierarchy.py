@@ -7,7 +7,14 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
-from rts.models.enums import ExecutionMode, MisfirePolicy, OverlapPolicy, ScheduleMode, Shell
+from rts.models.enums import (
+    ExecutionMode,
+    MisfirePolicy,
+    OverlapPolicy,
+    RunStatus,
+    ScheduleMode,
+    Shell,
+)
 from rts.models.hierarchy import ScheduleSource
 from rts.scheduling.cron import MAX_EXPRESSIONS, CronError, get_timezone, normalize_expression
 from rts.schemas.common import DescriptionStr, NameStr, ORMModel
@@ -241,6 +248,11 @@ class TaskOut(ORMModel):
         description="Posição (1..) na sequência da subcategoria; null se não roda em sequência.",
     )
     sequence_total: int | None = None
+    active_run_id: int | None = Field(
+        default=None,
+        description="Execução em andamento (ou aguardando) desta tarefa, para interromper.",
+    )
+    active_run_status: RunStatus | None = None
     effective_timezone: str
     timeout_seconds: int | None
     max_retries: int

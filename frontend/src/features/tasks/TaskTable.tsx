@@ -3,11 +3,12 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useRunTask } from "../../api/hooks";
 import type { Task } from "../../api/types";
-import { ActiveBadge } from "../../components/StatusBadge";
+import { ActiveBadge, RunStatusBadge } from "../../components/StatusBadge";
 import { useToast } from "../../components/Toast";
 import { Button, cx } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { SCHEDULE_SOURCE_LABELS } from "../../lib/schedule";
+import { InterruptButton } from "../runs/InterruptButton";
 
 export function TaskTable({ tasks }: { tasks: Task[] }) {
   const run = useRunTask();
@@ -60,12 +61,20 @@ export function TaskTable({ tasks }: { tasks: Task[] }) {
                 {task.next_run_at ? formatRelative(task.next_run_at) : "—"}
               </td>
               <td className="py-2 pr-3">
-                <ActiveBadge active={task.is_active} effective={task.is_effectively_active} />
+                {task.active_run_status ? (
+                  <RunStatusBadge status={task.active_run_status} />
+                ) : (
+                  <ActiveBadge active={task.is_active} effective={task.is_effectively_active} />
+                )}
               </td>
               <td className="py-2 text-right">
-                <Button size="sm" icon={<Play className="size-3.5" />} onClick={() => runNow(task)}>
-                  Executar
-                </Button>
+                {task.active_run_id ? (
+                  <InterruptButton task={task} size="sm" />
+                ) : (
+                  <Button size="sm" icon={<Play className="size-3.5" />} onClick={() => runNow(task)}>
+                    Executar
+                  </Button>
+                )}
               </td>
             </tr>
           ))}

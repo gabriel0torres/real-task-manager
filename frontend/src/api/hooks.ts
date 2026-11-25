@@ -6,6 +6,7 @@ import type {
   EffectiveVariable,
   GeneralSettings,
   Group,
+  GroupExecutionTimes,
   Run,
   RunPage,
   RunStatus,
@@ -74,6 +75,17 @@ export const useGroupTasks = (groupId: number) =>
     enabled: groupId > 0,
   });
 
+export const useGroupExecutionTimes = (groupId: number) =>
+  useQuery({
+    queryKey: ["groups", groupId, "execution-times"],
+    queryFn: () => api.get<GroupExecutionTimes>(`/groups/${groupId}/execution-times`),
+    enabled: groupId > 0,
+    refetchInterval: (q) => {
+      const a = q.state.data?.activity;
+      return a && a.running_sequences + a.running_runs + a.waiting_runs > 0 ? 3_000 : 30_000;
+    },
+  });
+
 /** Sequence runs of a subcategory; refreshed every 3 s while one is running. */
 export const useSequences = (subcategoryId: number, enabled = true) =>
   useQuery({
@@ -88,6 +100,8 @@ export const useTask = (id: number) =>
     queryKey: ["tasks", id],
     queryFn: () => api.get<Task>(`/tasks/${id}`),
     enabled: id > 0,
+    // Follow the active run (to show/hide "Interromper").
+    refetchInterval: (q) => (q.state.data?.active_run_id ? 3_000 : 20_000),
   });
 
 export const useEffectiveVariables = (taskId: number) =>
@@ -213,6 +227,10 @@ export const useSetSequenceOrder = () =>
 export const useRunSequence = () =>
   useApiMutation((subcategoryId: number) =>
     api.post<SequenceRun>(`/subcategories/${subcategoryId}/sequences`),
+  );
+export const useInterruptGroup = () =>
+  useApiMutation((groupId: number) =>
+    api.post<{ sequences_cancelled: number; runs_cancelled: number }>(`/groups/${groupId}/interrupt`),
   );
 export const useCancelSequence = () =>
   useApiMutation((sequenceId: number) => api.post<SequenceRun>(`/sequences/${sequenceId}/cancel`));

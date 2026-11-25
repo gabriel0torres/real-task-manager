@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, object_session, selectinload
 
 from rts.models import (
     EffectiveSchedule,
     Group,
+    Run,
+    RunStatus,
     ScheduleMode,
     Subcategory,
     Task,
@@ -316,8 +318,22 @@ def subcategory_to_out(sub: Subcategory) -> SubcategoryOut:
     )
 
 
+def _active_run(session: Session | None, task_id: int):
+    """The task's run to interrupt: a running one first, else the newest waiting one."""
+    if session is None:
+        return None
+    running_first = case((Run.status == RunStatus.RUNNING, 0), else_=1)
+    return session.execute(
+        select(Run.id, Run.status)
+        .where(Run.task_id == task_id, Run.status.in_([RunStatus.RUNNING, RunStatus.PENDING]))
+        .order_by(running_first, Run.id.desc())
+        .limit(1)
+    ).first()
+
+
 def task_to_out(task: Task, default_timezone: str) -> TaskOut:
     schedule = task.effective_schedule
+    active = _active_run(object_session(task), task.id)
     step = total = None
     if task.runs_in_sequence:
         steps = [t.id for t in task.subcategory.sequence_tasks()]
@@ -335,6 +351,8 @@ def task_to_out(task: Task, default_timezone: str) -> TaskOut:
             "next_run_at": task_next_run(task, default_timezone),
             "sequence_step": step,
             "sequence_total": total,
+            "active_run_id": active.id if active else None,
+            "active_run_status": active.status if active else None,
         }
     )
 

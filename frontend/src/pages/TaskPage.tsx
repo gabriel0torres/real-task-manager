@@ -14,6 +14,7 @@ import type { Group, Subcategory, Task } from "../api/types";
 import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, cx, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { InterruptButton } from "../features/runs/InterruptButton";
 import { RunHistory } from "../features/runs/RunHistory";
 import { EffectiveVariables } from "../features/variables/EffectiveVariables";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
@@ -149,6 +150,7 @@ export function TaskPage() {
             <Button variant="primary" icon={<Play className="size-4" />} loading={runTask.isPending} onClick={runNow}>
               Executar agora
             </Button>
+            <InterruptButton task={task} />
             <Button
               icon={task.is_active ? <Pause className="size-4" /> : <Play className="size-4" />}
               loading={update.isPending}

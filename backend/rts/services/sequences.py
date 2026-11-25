@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from rts.models import (
@@ -25,6 +25,7 @@ from rts.models import (
 )
 from rts.models.base import utcnow
 from rts.services.errors import ConflictError, InvalidInputError, NotFoundError
+from rts.services.hierarchy import get_group
 from rts.services.runs import append_system_log, cancel_run, create_run
 
 SKIPPED_BUSY = "Pulada: a sequência anterior desta subcategoria ainda está em andamento."
@@ -163,7 +164,7 @@ def advance_sequences(session: Session, now: datetime | None = None) -> bool:
     return changed
 
 
-def _last_runs(seq: SequenceRun) -> dict[int, Run]:
+def latest_step_runs(seq: SequenceRun) -> dict[int, Run]:
     """Step index -> its latest run (the last attempt when there were retries)."""
     last: dict[int, Run] = {}
     for run in seq.runs:
@@ -175,7 +176,7 @@ def _last_runs(seq: SequenceRun) -> dict[int, Run]:
 
 def _outcome(seq: SequenceRun) -> tuple[SequenceStatus, str]:
     total = len(seq.task_ids)
-    last = _last_runs(seq)
+    last = latest_step_runs(seq)
     ok = sum(1 for r in last.values() if r.status is RunStatus.SUCCESS)
     if ok == total:
         return SequenceStatus.SUCCESS, f"{total} de {total} tarefas com sucesso."
@@ -213,6 +214,52 @@ def cancel_sequence(session: Session, sequence_id: int) -> SequenceRun:
     return seq
 
 
+def _group_active_runs(session: Session, group_id: int) -> list[Run]:
+    return list(
+        session.scalars(
+            select(Run)
+            .join(Task, Run.task_id == Task.id)
+            .join(Subcategory, Task.subcategory_id == Subcategory.id)
+            .where(Subcategory.group_id == group_id, Run.status.in_(_ACTIVE))
+        )
+    )
+
+
+def group_activity(session: Session, group_id: int) -> dict:
+    """What "Interromper tudo" would stop in a group."""
+    sequences = session.scalar(
+        select(func.count(SequenceRun.id))
+        .join(Subcategory, SequenceRun.subcategory_id == Subcategory.id)
+        .where(Subcategory.group_id == group_id, SequenceRun.status == SequenceStatus.RUNNING)
+    )
+    runs = _group_active_runs(session, group_id)
+    return {
+        "running_sequences": sequences or 0,
+        "running_runs": sum(1 for r in runs if r.status is RunStatus.RUNNING),
+        "waiting_runs": sum(1 for r in runs if r.status is RunStatus.PENDING),
+    }
+
+
+def interrupt_group(session: Session, group_id: int) -> dict:
+    """Stop everything running or waiting in a group: its sequences and its tasks' runs.
+
+    Schedules are untouched: the next fires start again (pause the group to prevent it).
+    """
+    get_group(session, group_id)
+    sequences = session.scalars(
+        select(SequenceRun)
+        .join(Subcategory, SequenceRun.subcategory_id == Subcategory.id)
+        .where(Subcategory.group_id == group_id, SequenceRun.status == SequenceStatus.RUNNING)
+    ).all()
+    for seq in sequences:
+        cancel_sequence(session, seq.id)
+    runs = _group_active_runs(session, group_id)
+    for run in runs:
+        cancel_run(session, run.id)
+    session.flush()
+    return {"sequences_cancelled": len(sequences), "runs_cancelled": len(runs)}
+
+
 def list_sequences(session: Session, subcategory_id: int, limit: int = 20) -> list[SequenceRun]:
     stmt = (
         select(SequenceRun)
@@ -226,7 +273,7 @@ def list_sequences(session: Session, subcategory_id: int, limit: int = 20) -> li
 
 def sequence_to_out(session: Session, seq: SequenceRun) -> dict:
     """Steps with their latest run (retries collapse into the last attempt)."""
-    last = _last_runs(seq)
+    last = latest_step_runs(seq)
     names = {
         t.id: t.name for t in session.scalars(select(Task).where(Task.id.in_(seq.task_ids or [-1])))
     }

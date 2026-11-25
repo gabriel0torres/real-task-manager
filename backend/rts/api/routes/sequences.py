@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, status
+from pydantic import BaseModel, Field
 
 from rts.api.deps import CurrentUser, SessionDep
 from rts.schemas.common import ErrorOut
@@ -53,6 +54,29 @@ def run_sequence(subcategory_id: int, session: SessionDep, request: Request, use
     session.commit()
     _wake_embedded_engine(request)
     return svc.sequence_to_out(session, seq)
+
+
+class GroupInterruptOut(BaseModel):
+    sequences_cancelled: int
+    runs_cancelled: int = Field(
+        description="Execuções interrompidas (rodando) ou canceladas (na fila)."
+    )
+
+
+@router.post(
+    "/groups/{group_id}/interrupt",
+    response_model=GroupInterruptOut,
+    summary="Interromper tudo o que está rodando ou na fila no grupo",
+    description=(
+        "Cancela as sequências em andamento das subcategorias do grupo e interrompe as execuções "
+        "em andamento ou na fila das suas tarefas. Os agendamentos continuam valendo."
+    ),
+)
+def interrupt_group(group_id: int, session: SessionDep, request: Request):
+    result = svc.interrupt_group(session, group_id)
+    session.commit()
+    _wake_embedded_engine(request)
+    return result
 
 
 @router.get("/sequences/{sequence_id}", response_model=SequenceRunOut, summary="Obter sequência")

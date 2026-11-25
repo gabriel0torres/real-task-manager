@@ -82,7 +82,11 @@ export function RunDetailPage() {
                   })
                 }
               >
-                {run.cancel_requested ? "Cancelando..." : "Cancelar"}
+                {run.cancel_requested
+                  ? "Interrompendo..."
+                  : status === "running"
+                    ? "Interromper"
+                    : "Cancelar"}
               </Button>
             )}
             <a href={`${API_BASE}/runs/${run.id}/log.txt`} download={`execucao-${run.id}.log`}>

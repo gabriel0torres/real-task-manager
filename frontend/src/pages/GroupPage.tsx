@@ -15,6 +15,7 @@ import { EntityForm } from "../components/EntityForm";
 import { ActiveBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
+import { ExecutionTimesCard } from "../features/groups/ExecutionTimesCard";
 import { GroupNotifications } from "../features/notifications/GroupNotifications";
 import { DefaultScheduleCard } from "../features/schedule/DefaultScheduleCard";
 import { ExportDialog } from "../features/transfer/ExportDialog";
@@ -148,6 +149,8 @@ export function GroupPage() {
             />
           </Card>
         )}
+
+        <ExecutionTimesCard groupId={group.id} groupName={group.name} />
 
         {settings && tasks && subcategories && (
           <DefaultScheduleCard
