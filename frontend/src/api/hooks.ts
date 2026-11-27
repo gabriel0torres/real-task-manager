@@ -228,6 +228,16 @@ export const useRunSequence = () =>
   useApiMutation((subcategoryId: number) =>
     api.post<SequenceRun>(`/subcategories/${subcategoryId}/sequences`),
   );
+export const useRunAllTasks = () =>
+  useApiMutation((subcategoryId: number) =>
+    api.post<{
+      mode: "parallel" | "sequential";
+      sequence_id: number | null;
+      run_ids: number[];
+      task_count: number;
+      paused: string[];
+    }>(`/subcategories/${subcategoryId}/run-all`),
+  );
 export const useInterruptGroup = () =>
   useApiMutation((groupId: number) =>
     api.post<{ sequences_cancelled: number; runs_cancelled: number }>(`/groups/${groupId}/interrupt`),

@@ -56,6 +56,33 @@ def run_sequence(subcategory_id: int, session: SessionDep, request: Request, use
     return svc.sequence_to_out(session, seq)
 
 
+class RunAllOut(BaseModel):
+    mode: str = Field(description="parallel (todas ao mesmo tempo) ou sequential (uma por vez)")
+    sequence_id: int | None
+    run_ids: list[int] = Field(description="Execuções criadas (no modo sequencial, só a 1ª etapa).")
+    task_count: int
+    paused: list[str] = Field(description="Tarefas pausadas, que ficaram de fora.")
+
+
+@router.post(
+    "/subcategories/{subcategory_id}/run-all",
+    response_model=RunAllOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Executar agora todas as tarefas ativas da subcategoria",
+    description=(
+        "Subcategoria paralela: todas ao mesmo tempo. Sequencial: uma depois da outra, na ordem "
+        "da sequência (as de fora da sequência no fim). Tarefas pausadas ficam de fora."
+    ),
+    responses={409: {"model": ErrorOut}, 422: {"model": ErrorOut}},
+)
+def run_all(subcategory_id: int, session: SessionDep, request: Request, user: CurrentUser):
+    sub = get_subcategory(session, subcategory_id)
+    result = svc.run_all_tasks(session, sub, by=user.username)
+    session.commit()
+    _wake_embedded_engine(request)
+    return result
+
+
 class GroupInterruptOut(BaseModel):
     sequences_cancelled: int
     runs_cancelled: int = Field(

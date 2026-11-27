@@ -416,7 +416,18 @@ No card **Execução das tarefas** da subcategoria, escolha **Paralela** (padrã
 
 ### Execução
 
-- **Executar agora** (funciona mesmo com a tarefa pausada) e **Cancelar**.
+- **Executar agora** (funciona mesmo com a tarefa pausada) e **Interromper**, que encerra o
+  processo e seus filhos, ou cancela a execução se ela ainda estiver na fila.
+- **Executar todas**, no topo da subcategoria, roda agora todas as tarefas **ativas** dela:
+  - **subcategoria paralela:** ao mesmo tempo;
+  - **subcategoria sequencial:** uma depois da outra, na ordem da sequência, com as tarefas fora
+    da sequência no fim.
+
+  As tarefas pausadas ficam de fora. Pela API: `POST /api/v1/subcategories/{id}/run-all`.
+- **Interromper tudo**, na tela do grupo, cancela as sequências e as execuções em andamento ou na
+  fila do grupo. Os agendamentos continuam valendo.
+- **Tempo de execução**, na tela do grupo, mostra por subcategoria quanto durou a última sequência
+  (ou rodada paralela), o resultado e a média das últimas 10.
 - O log aparece ao vivo; saída de erro em vermelho, mensagens do RTS em azul. Há botões para
   **copiar** e **baixar** o log.
 - Toda execução recebe as variáveis `RTS_RUN_ID`, `RTS_TASK_ID`, `RTS_TASK`, `RTS_SUBCATEGORY`,

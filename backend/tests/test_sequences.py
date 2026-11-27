@@ -353,3 +353,50 @@ def test_real_scheduler_fires_the_sequence(app, client, db, seq_sub, monkeypatch
         )
     finally:
         eng.stop()
+
+
+# =========================================================================== run all
+def test_run_all_in_a_sequential_subcategory(engine, client, db, seq_sub):
+    """All active tasks, one at a time: the sequence order, then the ones outside it."""
+    sub, t = seq_sub["sub"], seq_sub["tasks"]
+    client.patch(f"{API}/tasks/{t['own']['id']}", json={"command": step_command("own")})
+    paused = seq_sub["task"]("pausada")
+    client.patch(f"{API}/tasks/{paused['id']}", json={"is_active": False})
+
+    resp = client.post(f"{API}/subcategories/{sub['id']}/run-all")
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["mode"] == "sequential" and body["task_count"] == 4
+    assert body["paused"] == ["pausada"] and len(body["run_ids"]) == 1
+    assert client.post(f"{API}/subcategories/{sub['id']}/run-all").status_code == 409
+
+    done = drive(engine, db, body["sequence_id"])
+    assert done.status is SequenceStatus.SUCCESS
+    marks = [m for m in seq_sub["marks"].read_text().split("\n") if m.startswith("start")]
+    assert marks == ["start a", "start b", "start c", "start own"]
+
+
+def test_run_all_in_a_parallel_subcategory(engine, client, db, seq_sub):
+    sub, t = seq_sub["sub"], seq_sub["tasks"]
+    client.patch(f"{API}/subcategories/{sub['id']}", json={"execution_mode": "parallel"})
+    client.patch(f"{API}/tasks/{t['own']['id']}", json={"is_active": False})
+
+    body = client.post(f"{API}/subcategories/{sub['id']}/run-all").json()
+    assert body["mode"] == "parallel" and body["sequence_id"] is None
+    assert body["task_count"] == 3 and body["paused"] == ["own"]
+    runs = [db.get(Run, i) for i in body["run_ids"]]
+    assert sorted(r.task_id for r in runs) == sorted(t[n]["id"] for n in ("a", "b", "c"))
+    assert all(r.trigger.value == "manual" and r.triggered_by == "admin" for r in runs)
+
+    started = engine.dispatch()  # all at once
+    assert sorted(started) == sorted(body["run_ids"])
+    assert engine.wait_idle(30)
+    db.expire_all()
+    assert all(db.get(Run, i).status is RunStatus.SUCCESS for i in body["run_ids"])
+
+
+def test_run_all_without_active_tasks(client, make):
+    g = make.group("g")
+    s = make.subcategory(g["id"], "vazia")
+    assert client.post(f"{API}/subcategories/{s['id']}/run-all").status_code == 422
+    assert client.post(f"{API}/subcategories/999/run-all").status_code == 404

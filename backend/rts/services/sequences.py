@@ -96,11 +96,15 @@ def start_sequence(
     scheduled_for: datetime | None = None,
     triggered_by: str | None = None,
     now: datetime | None = None,
+    tasks: list[Task] | None = None,
 ) -> SequenceRun:
-    """Start a sequence (or record it as skipped). The caller commits."""
+    """Start a sequence (or record it as skipped). The caller commits.
+
+    ``tasks``: the steps, in order (default: the subcategory's sequence tasks).
+    """
     now = now or utcnow()
     busy = running_sequence(session, sub.id) is not None
-    tasks = sub.sequence_tasks()
+    tasks = sub.sequence_tasks() if tasks is None else tasks
     seq = SequenceRun(
         subcategory_id=sub.id,
         status=SequenceStatus.RUNNING,
@@ -200,6 +204,43 @@ def request_sequence(session: Session, sub: Subcategory, by: str | None = None) 
     if seq.status is SequenceStatus.SKIPPED:
         raise InvalidInputError(seq.status_reason or "Nada a executar.")
     return seq
+
+
+def run_all_tasks(session: Session, sub: Subcategory, by: str | None = None) -> dict:
+    """ "Executar todas": every active task of the subcategory, now.
+
+    Parallel subcategory: one manual run per task, all at once. Sequential one: a
+    sequence with all of them, one after the other - the sequence order first, then
+    the tasks outside it (own schedule / manual) by name. Paused tasks stay out.
+    """
+    active = [t for t in sub.tasks if t.is_active]
+    paused = sorted((t.name for t in sub.tasks if not t.is_active), key=str.lower)
+    if not active:
+        raise InvalidInputError("Nenhuma tarefa ativa nesta subcategoria.")
+    if sub.is_sequential:
+        if running_sequence(session, sub.id) is not None:
+            raise ConflictError("Já existe uma sequência em andamento nesta subcategoria.")
+        ordered = sub.sequence_tasks()
+        ordered += sorted((t for t in active if t not in ordered), key=lambda t: t.name.lower())
+        seq = start_sequence(session, sub, RunTrigger.MANUAL, triggered_by=by, tasks=ordered)
+        return {
+            "mode": "sequential",
+            "sequence_id": seq.id,
+            "run_ids": [r.id for r in seq.runs],
+            "task_count": len(ordered),
+            "paused": paused,
+        }
+    runs = [
+        create_run(session, t.id, RunTrigger.MANUAL, triggered_by=by)
+        for t in sorted(active, key=lambda t: t.name.lower())
+    ]
+    return {
+        "mode": "parallel",
+        "sequence_id": None,
+        "run_ids": [r.id for r in runs],
+        "task_count": len(runs),
+        "paused": paused,
+    }
 
 
 def cancel_sequence(session: Session, sequence_id: int) -> SequenceRun:

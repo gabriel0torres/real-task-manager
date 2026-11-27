@@ -17,6 +17,7 @@ import { useToast } from "../components/Toast";
 import { Button, Card, EmptyState, ErrorBox, PageHeader, Spinner } from "../components/ui";
 import { DefaultScheduleCard } from "../features/schedule/DefaultScheduleCard";
 import { ExecutionCard } from "../features/sequences/ExecutionCard";
+import { RunAllButton } from "../features/sequences/RunAllButton";
 import { TaskTable } from "../features/tasks/TaskTable";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
@@ -112,6 +113,7 @@ export function SubcategoryPage() {
         subtitle={sub.description || undefined}
         actions={
           <>
+            {tasks && <RunAllButton sub={sub} tasks={tasks} />}
             <Button
               icon={sub.is_active ? <Pause className="size-4" /> : <Play className="size-4" />}
               onClick={togglePause}
