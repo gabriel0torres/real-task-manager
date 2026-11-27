@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import type { UserEvent } from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 
+import { ConfirmProvider } from "../components/Confirm";
 import { ToastProvider } from "../components/Toast";
 
 export function renderWithProviders(ui: ReactElement, { route = "/" } = {}) {
@@ -11,10 +13,20 @@ export function renderWithProviders(ui: ReactElement, { route = "/" } = {}) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[route]}>
-        <ToastProvider>{ui}</ToastProvider>
+        <ToastProvider>
+          <ConfirmProvider>{ui}</ConfirmProvider>
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+/** Answer the styled confirmation dialog; returns its text for assertions. */
+export async function answerConfirm(user: UserEvent, button: string): Promise<string> {
+  const dialog = await screen.findByRole("alertdialog");
+  const text = dialog.textContent ?? "";
+  await user.click(within(dialog).getByRole("button", { name: button }));
+  return text;
 }
 
 type Handler = (init: RequestInit | undefined, url: URL) => unknown;

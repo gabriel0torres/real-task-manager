@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SequenceRun, Subcategory, Task } from "../../api/types";
-import { bodyOf, mockApi, renderWithProviders } from "../../test/utils";
+import { answerConfirm, bodyOf, mockApi, renderWithProviders } from "../../test/utils";
 import { ExecutionCard } from "./ExecutionCard";
 
 const SUB = {
@@ -101,7 +101,6 @@ describe("ExecutionCard", () => {
   });
 
   it("follows a running sequence and cancels it", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const api = mockApi({
       "GET /subcategories/1/sequences": () => [RUNNING],
       "POST /sequences/5/cancel": () => ({ ...RUNNING, status: "cancelled" }),
@@ -115,6 +114,9 @@ describe("ExecutionCard", () => {
     expect(screen.getByRole("button", { name: "Executar sequência agora" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Cancelar sequência" }));
+    expect(await answerConfirm(user, "Cancelar sequência")).toContain(
+      "A tarefa em andamento (ordem_servico) será encerrada",
+    );
     await waitFor(() => expect(api.mock.calls.some(([u]) => String(u).includes("/sequences/5/cancel"))).toBe(true));
   });
 

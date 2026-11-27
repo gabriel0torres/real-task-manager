@@ -10,6 +10,7 @@ import {
 import type { Variable, VariableScope } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, Checkbox, EmptyState, ErrorBox, Input, Spinner } from "../../components/ui";
+import { useConfirm } from "../../components/Confirm";
 
 export const SECRET_MASK = "••••••";
 
@@ -98,6 +99,7 @@ export function VariablesEditor({
 }) {
   const toast = useToast();
   const { data, isLoading, error } = useVariables(scope, ownerId);
+  const confirm = useConfirm();
   const create = useCreateVariable();
   const update = useUpdateVariable();
   const remove = useDeleteVariable();
@@ -134,8 +136,14 @@ export function VariablesEditor({
       },
     );
 
-  const handleDelete = (variable: Variable) => {
-    if (!window.confirm(`Excluir a variável ${variable.key}?`)) return;
+  const handleDelete = async (variable: Variable) => {
+    const ok = await confirm({
+      title: `Excluir a variável ${variable.key}?`,
+      message: <p>As tarefas que a usam passam a ver o valor do nível acima, se houver.</p>,
+      confirmLabel: "Excluir",
+      tone: "danger",
+    });
+    if (!ok) return;
     remove.mutate(variable.id, {
       onSuccess: () => toast.success(`Variável ${variable.key} excluída.`),
       onError: toast.error,

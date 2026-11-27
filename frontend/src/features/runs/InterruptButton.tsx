@@ -4,6 +4,7 @@ import { useCancelRun } from "../../api/hooks";
 import type { Task } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import { Button } from "../../components/ui";
+import { useConfirm } from "../../components/Confirm";
 
 /**
  * Stops the task's active run: kills the process tree when running, or cancels it
@@ -12,24 +13,35 @@ import { Button } from "../../components/ui";
 export function InterruptButton({ task, size = "md" }: { task: Task; size?: "sm" | "md" }) {
   const cancel = useCancelRun();
   const toast = useToast();
+  const confirm = useConfirm();
   const runId = task.active_run_id;
   if (!runId) return null;
   const running = task.active_run_status === "running";
 
-  const interrupt = () => {
-    const lines = [
-      running
-        ? `Interromper a execução #${runId} de "${task.name}"? O processo e os que ele abriu serão encerrados.`
-        : `Cancelar a execução #${runId} de "${task.name}", que está aguardando?`,
-    ];
-    if (task.sequence_step) {
-      lines.push(
-        "A tarefa faz parte de uma sequência: depois da interrupção, a sequência segue para a próxima " +
-          "tarefa ou para, conforme a regra de falha da subcategoria. Para parar a sequência inteira, " +
-          "use “Cancelar sequência” (na subcategoria) ou “Interromper tudo” (no grupo).",
-      );
-    }
-    if (!window.confirm(lines.join("\n\n"))) return;
+  const interrupt = async () => {
+    const ok = await confirm({
+      title: running ? `Interromper "${task.name}"?` : `Cancelar a execução de "${task.name}"?`,
+      message: (
+        <>
+          <p>
+            {running
+              ? `A execução #${runId} será encerrada, junto com os processos que ela abriu.`
+              : `A execução #${runId} está aguardando e não será iniciada.`}
+          </p>
+          {task.sequence_step && (
+            <p>
+              A tarefa faz parte de uma sequência: depois disso, a sequência segue para a próxima tarefa ou
+              para, conforme a regra de falha da subcategoria. Para parar a sequência inteira, use{" "}
+              <strong>Cancelar sequência</strong> (na subcategoria) ou <strong>Interromper tudo</strong> (no
+              grupo).
+            </p>
+          )}
+        </>
+      ),
+      confirmLabel: running ? "Interromper" : "Cancelar execução",
+      tone: "danger",
+    });
+    if (!ok) return;
     cancel.mutate(runId, {
       onSuccess: () => toast.success(running ? "Interrupção solicitada." : "Execução cancelada."),
       onError: toast.error,

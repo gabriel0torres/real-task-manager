@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { GroupExecutionTimes, Task } from "../../api/types";
-import { mockApi, renderWithProviders } from "../../test/utils";
+import { answerConfirm, mockApi, renderWithProviders } from "../../test/utils";
 import { InterruptButton } from "../runs/InterruptButton";
 import { ExecutionTimesCard } from "./ExecutionTimesCard";
 
@@ -64,7 +64,6 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("ExecutionTimesCard", () => {
   it("shows how long each subcategory took and interrupts everything", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const api = mockApi({
       "GET /groups/3/execution-times": () => TIMES,
       "POST /groups/3/interrupt": () => ({ sequences_cancelled: 1, runs_cancelled: 1 }),
@@ -85,7 +84,9 @@ describe("ExecutionTimesCard", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Interromper tudo" }));
-    expect(confirm.mock.calls[0][0]).toContain("Os agendamentos continuam valendo");
+    const message = await answerConfirm(user, "Interromper tudo");
+    expect(message).toContain('Interromper tudo no grupo "Automações"?');
+    expect(message).toContain("Os agendamentos continuam valendo");
     await waitFor(() =>
       expect(api.mock.calls.some(([u, i]) => String(u).endsWith("/groups/3/interrupt") && i?.method === "POST")).toBe(true),
     );
@@ -109,14 +110,13 @@ describe("InterruptButton", () => {
   const task = (extra: Partial<Task>) => ({ id: 1, name: "clientes", sequence_step: null, ...extra }) as Task;
 
   it("interrupts the running run, warning about the sequence", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const api = mockApi({ "POST /runs/42/cancel": () => ({ id: 42 }) });
     const user = userEvent.setup();
     renderWithProviders(
       <InterruptButton task={task({ active_run_id: 42, active_run_status: "running", sequence_step: 3 })} />,
     );
     await user.click(screen.getByRole("button", { name: "Interromper" }));
-    expect(confirm.mock.calls[0][0]).toContain("faz parte de uma sequência");
+    expect(await answerConfirm(user, "Interromper")).toContain("faz parte de uma sequência");
     await waitFor(() => expect(api).toHaveBeenCalled());
     expect(await screen.findByText("Interrupção solicitada.")).toBeInTheDocument();
   });

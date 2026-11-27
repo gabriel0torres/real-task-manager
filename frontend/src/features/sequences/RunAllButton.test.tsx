@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Subcategory, Task } from "../../api/types";
-import { mockApi, renderWithProviders } from "../../test/utils";
+import { answerConfirm, mockApi, renderWithProviders } from "../../test/utils";
 import { RunAllButton } from "./RunAllButton";
 
 const sub = (extra: Partial<Subcategory> = {}) =>
@@ -21,7 +21,6 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("RunAllButton", () => {
   it("runs every active task in sequence, explaining what stays out", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const api = mockApi({
       "POST /subcategories/1/run-all": () => ({
         mode: "sequential",
@@ -35,16 +34,16 @@ describe("RunAllButton", () => {
     renderWithProviders(<RunAllButton sub={sub()} tasks={TASKS} />);
 
     await user.click(screen.getByRole("button", { name: "Executar todas" }));
-    const message = confirm.mock.calls[0][0] as string;
-    expect(message).toContain("as 3 tarefas ativas de \"Palacio\", uma depois da outra");
+    const message = await answerConfirm(user, "Executar todas");
+    expect(message).toContain('Executar todas as tarefas de "Palacio"?');
+    expect(message).toContain("As 3 tarefas ativas vão rodar agora, uma depois da outra");
     expect(message).toContain("fora da sequência");
-    expect(message).toContain("Ficam de fora as pausadas: desligada.");
+    expect(message).toContain("Ficam de fora as pausadas:desligada");
     await waitFor(() => expect(api).toHaveBeenCalled());
     expect(await screen.findByText("Sequência #12 iniciada com 3 tarefas.")).toBeInTheDocument();
   });
 
   it("runs all at once in a parallel subcategory", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     mockApi({
       "POST /subcategories/1/run-all": () => ({
         mode: "parallel",
@@ -57,6 +56,7 @@ describe("RunAllButton", () => {
     const user = userEvent.setup();
     renderWithProviders(<RunAllButton sub={sub({ execution_mode: "parallel" })} tasks={TASKS.slice(0, 3)} />);
     await user.click(screen.getByRole("button", { name: "Executar todas" }));
+    expect(await answerConfirm(user, "Executar todas")).toContain("ao mesmo tempo");
     expect(await screen.findByText("3 execuções solicitadas.")).toBeInTheDocument();
   });
 

@@ -20,6 +20,7 @@ import { GroupNotifications } from "../features/notifications/GroupNotifications
 import { DefaultScheduleCard } from "../features/schedule/DefaultScheduleCard";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
+import { useConfirm } from "../components/Confirm";
 
 export function GroupFormPage() {
   const navigate = useNavigate();
@@ -57,6 +58,7 @@ export function GroupPage() {
   const { data: tasks } = useGroupTasks(groupId);
   const { data: settings } = useSettings();
   const update = useUpdateGroup();
+  const confirm = useConfirm();
   const remove = useDeleteGroup();
   const [editing, setEditing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -80,8 +82,19 @@ export function GroupPage() {
       },
     );
 
-  const handleDelete = () => {
-    if (!window.confirm(`Excluir o grupo "${group.name}" com TODAS as subcategorias, tarefas e histórico?`)) return;
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: `Excluir o grupo "${group.name}"?`,
+      message: (
+        <p>
+          Serão excluídas <strong>todas</strong> as subcategorias, tarefas e o histórico de execuções deste
+          grupo. Não é possível desfazer.
+        </p>
+      ),
+      confirmLabel: "Excluir grupo",
+      tone: "danger",
+    });
+    if (!ok) return;
     remove.mutate(group.id, {
       onSuccess: () => {
         toast.success("Grupo excluído.");

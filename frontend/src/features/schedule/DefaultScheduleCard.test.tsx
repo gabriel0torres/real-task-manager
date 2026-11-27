@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ScheduleOwner, Task } from "../../api/types";
-import { mockApi, renderWithProviders } from "../../test/utils";
+import { answerConfirm, mockApi, renderWithProviders } from "../../test/utils";
 import { DefaultScheduleCard } from "./DefaultScheduleCard";
 
 const NONE: ScheduleOwner = { cron_expressions: [], timezone: null, schedule_description: "Sem agendamento" };
@@ -62,7 +62,6 @@ describe("DefaultScheduleCard", () => {
   it("confirms who is affected before saving", async () => {
     previewApi();
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     const onSave = renderCard();
 
     await user.click(screen.getByRole("button", { name: "Alterar" }));
@@ -74,13 +73,14 @@ describe("DefaultScheduleCard", () => {
     await user.type(every, "3");
 
     await user.click(screen.getByRole("button", { name: "Salvar agendamento" }));
-    expect(confirm).toHaveBeenCalledTimes(1);
-    const message = confirm.mock.calls[0][0] as string;
-    expect(message).toContain("2 tarefas que herdam o agendamento: relatorio, backup");
-    expect(message).toContain("1 tarefa tem agendamento próprio e não muda(m): conciliacao");
+    const message = await answerConfirm(user, "Voltar");
+    expect(message).toContain("Vale para 2 tarefas que herdam o agendamento:relatoriobackup");
+    expect(message).toContain("Não mudam (1 tem agendamento próprio):conciliacao");
     expect(onSave).not.toHaveBeenCalled(); // cancelled
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Salvar agendamento" }));
+    await answerConfirm(user, "Salvar agendamento");
     expect(onSave).toHaveBeenCalledWith(
       { cron_expressions: ["0 */3 * * *"], timezone: null },
       expect.any(Function),
@@ -90,7 +90,6 @@ describe("DefaultScheduleCard", () => {
   it("group card offers 'no default schedule' and saves without asking when nobody inherits", async () => {
     previewApi();
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, "confirm");
     const onSave = vi.fn();
     renderWithProviders(
       <DefaultScheduleCard
@@ -113,7 +112,7 @@ describe("DefaultScheduleCard", () => {
     const modes = screen.getByRole("radiogroup", { name: "Tipo de agendamento" });
     await user.click(within(modes).getByRole("radio", { name: "Sem agendamento padrão" }));
     await user.click(screen.getByRole("button", { name: "Salvar agendamento" }));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(); // nobody inherits: no question
     expect(onSave).toHaveBeenCalledWith({ cron_expressions: [], timezone: null }, expect.any(Function));
   });
 });

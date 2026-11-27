@@ -21,6 +21,7 @@ import { RunAllButton } from "../features/sequences/RunAllButton";
 import { TaskTable } from "../features/tasks/TaskTable";
 import { ExportDialog } from "../features/transfer/ExportDialog";
 import { VariablesEditor } from "../features/variables/VariablesEditor";
+import { useConfirm } from "../components/Confirm";
 
 export function SubcategoryFormPage() {
   const [params] = useSearchParams();
@@ -71,6 +72,7 @@ export function SubcategoryPage() {
   const { data: tasks } = useTasks(subcategoryId);
   const { data: settings } = useSettings();
   const update = useUpdateSubcategory();
+  const confirm = useConfirm();
   const remove = useDeleteSubcategory();
   const [editing, setEditing] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -87,8 +89,14 @@ export function SubcategoryPage() {
       },
     );
 
-  const handleDelete = () => {
-    if (!window.confirm(`Excluir a subcategoria "${sub.name}" com todas as tarefas e histórico?`)) return;
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: `Excluir a subcategoria "${sub.name}"?`,
+      message: <p>Serão excluídas todas as tarefas dela e o histórico de execuções. Não é possível desfazer.</p>,
+      confirmLabel: "Excluir subcategoria",
+      tone: "danger",
+    });
+    if (!ok) return;
     remove.mutate(sub.id, {
       onSuccess: () => {
         toast.success("Subcategoria excluída.");

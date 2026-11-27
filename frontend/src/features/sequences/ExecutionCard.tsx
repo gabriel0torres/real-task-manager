@@ -13,6 +13,7 @@ import { RunStatusBadge } from "../../components/StatusBadge";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, cx, HelpTip, Select } from "../../components/ui";
 import { formatDateTime, formatDuration, TRIGGER_LABELS } from "../../lib/format";
+import { useConfirm } from "../../components/Confirm";
 
 const MODES: { mode: ExecutionMode; label: string; hint: string }[] = [
   { mode: "parallel", label: "Paralela", hint: "As tarefas que herdam o agendamento começam juntas." },
@@ -79,6 +80,7 @@ export function ExecutionCard({ sub, tasks }: { sub: Subcategory; tasks: Task[] 
   const setOrder = useSetSequenceOrder();
   const runSequence = useRunSequence();
   const cancel = useCancelSequence();
+  const confirm = useConfirm();
   const sequential = sub.execution_mode === "sequential";
   const { data: sequences } = useSequences(sub.id);
 
@@ -255,8 +257,20 @@ export function ExecutionCard({ sub, tasks }: { sub: Subcategory; tasks: Task[] 
                 variant="danger"
                 icon={<Square className="size-3.5" />}
                 loading={cancel.isPending}
-                onClick={() => {
-                  if (!window.confirm("Cancelar a sequência? A tarefa em andamento será encerrada.")) return;
+                onClick={async () => {
+                  const current = running.steps[running.current_index];
+                  const ok = await confirm({
+                    title: `Cancelar a sequência #${running.id}?`,
+                    message: (
+                      <p>
+                        {current ? <>A tarefa em andamento (<strong>{current.task_name}</strong>) será encerrada</> : "A tarefa em andamento será encerrada"}{" "}
+                        e as próximas não serão iniciadas.
+                      </p>
+                    ),
+                    confirmLabel: "Cancelar sequência",
+                    tone: "danger",
+                  });
+                  if (!ok) return;
                   cancel.mutate(running.id, {
                     onSuccess: () => toast.success("Sequência cancelada."),
                     onError: toast.error,

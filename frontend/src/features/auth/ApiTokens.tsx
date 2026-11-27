@@ -7,6 +7,7 @@ import { useToast } from "../../components/Toast";
 import { Badge, Button, EmptyState, ErrorBox, Field, Input, Select, Spinner } from "../../components/ui";
 import { copyText } from "../../lib/clipboard";
 import { formatDateTime } from "../../lib/format";
+import { useConfirm } from "../../components/Confirm";
 
 function CreatedToken({ token, taskId, onClose }: { token: string; taskId: number | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
@@ -50,6 +51,7 @@ export function ApiTokens() {
   const create = useCreateToken();
   const revoke = useRevokeToken();
   const [name, setName] = useState("");
+  const confirm = useConfirm();
   const [taskId, setTaskId] = useState<number | null>(null);
   const [created, setCreated] = useState<{ token: string; taskId: number | null } | null>(null);
 
@@ -134,8 +136,14 @@ export function ApiTokens() {
                         variant="ghost"
                         aria-label={`Revogar ${t.name}`}
                         icon={<Trash2 className="size-3.5 text-red-500" />}
-                        onClick={() => {
-                          if (!window.confirm(`Revogar o token "${t.name}"? Scripts que o usam deixarão de funcionar.`)) return;
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: `Revogar o token "${t.name}"?`,
+                            message: <p>Scripts e integrações que usam este token deixarão de funcionar.</p>,
+                            confirmLabel: "Revogar",
+                            tone: "danger",
+                          });
+                          if (!ok) return;
                           revoke.mutate(t.id, { onSuccess: () => toast.success("Token revogado."), onError: toast.error });
                         }}
                       >

@@ -13,10 +13,11 @@ export function cx(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(" ");
 }
 
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+type Variant = "primary" | "secondary" | "danger" | "dangerSolid" | "ghost";
 
 const VARIANTS: Record<Variant, string> = {
   primary: "bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-indigo-300",
+  dangerSolid: "bg-red-600 text-white hover:bg-red-500 disabled:bg-red-300",
   secondary:
     "bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-400",
   danger: "bg-white text-red-600 ring-1 ring-inset ring-red-200 hover:bg-red-50 disabled:text-red-300",
@@ -30,19 +31,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: ReactNode;
 }
 
-export function Button({
-  variant = "secondary",
-  size = "md",
-  loading,
-  icon,
-  className,
-  children,
-  disabled,
-  type = "button",
-  ...rest
-}: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = "secondary", size = "md", loading, icon, className, children, disabled, type = "button", ...rest },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       type={type}
       disabled={disabled || loading}
       className={cx(
@@ -57,7 +52,7 @@ export function Button({
       {children}
     </button>
   );
-}
+});
 
 export function Card({
   title,

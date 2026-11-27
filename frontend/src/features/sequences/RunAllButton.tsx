@@ -4,29 +4,43 @@ import { useRunAllTasks } from "../../api/hooks";
 import type { Subcategory, Task } from "../../api/types";
 import { useToast } from "../../components/Toast";
 import { Button } from "../../components/ui";
-import { namesList, plural } from "../../lib/schedule";
+import { plural } from "../../lib/schedule";
+import { ConfirmList, useConfirm } from "../../components/Confirm";
 
 /** "Executar todas": every active task of the subcategory, now (in sequence when sequential). */
 export function RunAllButton({ sub, tasks }: { sub: Subcategory; tasks: Task[] }) {
   const runAll = useRunAllTasks();
   const toast = useToast();
+  const confirm = useConfirm();
   const active = tasks.filter((t) => t.is_active);
   const paused = tasks.filter((t) => !t.is_active);
   const sequential = sub.execution_mode === "sequential";
   const blocked = sequential && sub.running_sequence_id !== null;
 
-  const run = () => {
-    const lines = [
-      sequential
-        ? `Executar agora as ${plural(active.length, "tarefa ativa", "tarefas ativas")} de "${sub.name}", ` +
-          "uma depois da outra, na ordem da sequência?"
-        : `Executar agora as ${plural(active.length, "tarefa ativa", "tarefas ativas")} de "${sub.name}" ao mesmo tempo?`,
-    ];
-    if (sequential && active.some((t) => t.sequence_step === null)) {
-      lines.push("As tarefas fora da sequência (agendamento próprio ou somente manual) rodam no fim.");
-    }
-    if (paused.length) lines.push(`Ficam de fora as pausadas: ${namesList(paused)}.`);
-    if (!window.confirm(lines.join("\n\n"))) return;
+  const run = async () => {
+    const ok = await confirm({
+      title: `Executar todas as tarefas de "${sub.name}"?`,
+      message: (
+        <>
+          <p>
+            {sequential
+              ? `As ${plural(active.length, "tarefa ativa", "tarefas ativas")} vão rodar agora, uma depois da outra, na ordem da sequência.`
+              : `As ${plural(active.length, "tarefa ativa", "tarefas ativas")} vão rodar agora, ao mesmo tempo.`}
+          </p>
+          {sequential && active.some((t) => t.sequence_step === null) && (
+            <p>As tarefas fora da sequência (agendamento próprio ou somente manual) rodam no fim.</p>
+          )}
+          {paused.length > 0 && (
+            <>
+              <p>Ficam de fora as pausadas:</p>
+              <ConfirmList items={paused.map((t) => t.name)} />
+            </>
+          )}
+        </>
+      ),
+      confirmLabel: "Executar todas",
+    });
+    if (!ok) return;
     runAll.mutate(sub.id, {
       onSuccess: (r) =>
         toast.success(

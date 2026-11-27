@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import type { InheritedSchedule, Task } from "../api/types";
+import { ConfirmProvider } from "../components/Confirm";
 import { ToastProvider } from "../components/Toast";
 import { bodyOf, mockApi } from "../test/utils";
 import { TaskFormPage } from "./TaskFormPage";
@@ -100,11 +101,13 @@ function setup(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[route]}>
         <ToastProvider>
+          <ConfirmProvider>
           <Routes>
             <Route path="/tasks/new" element={<TaskFormPage />} />
             <Route path="/tasks/:taskId/edit" element={<TaskFormPage />} />
             <Route path="/tasks/:taskId" element={<p>página da tarefa</p>} />
           </Routes>
+          </ConfirmProvider>
         </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,

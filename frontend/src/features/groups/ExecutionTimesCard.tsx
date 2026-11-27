@@ -8,6 +8,7 @@ import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, HelpTip } from "../../components/ui";
 import { formatDateTime, formatDuration, formatRelative } from "../../lib/format";
 import { plural } from "../../lib/schedule";
+import { useConfirm } from "../../components/Confirm";
 
 function Result({ entry }: { entry: ExecutionEntry }) {
   return (
@@ -25,6 +26,7 @@ export function ExecutionTimesCard({ groupId, groupName }: { groupId: number; gr
   const toast = useToast();
   const { data } = useGroupExecutionTimes(groupId);
   const interrupt = useInterruptGroup();
+  const confirm = useConfirm();
   if (!data) return null;
 
   const { running_sequences: seqs, running_runs: running, waiting_runs: waiting } = data.activity;
@@ -37,14 +39,28 @@ export function ExecutionTimesCard({ groupId, groupName }: { groupId: number; gr
     .filter(Boolean)
     .join(", ");
 
-  const interruptAll = () => {
-    const message =
-      `Interromper tudo no grupo "${groupName}"? (${activityText})\n\n` +
-      "As sequências em andamento são canceladas e as tarefas rodando são encerradas (com os processos " +
-      "que abriram); as que estão na fila são canceladas.\n\n" +
-      "Os agendamentos continuam valendo: no próximo horário as automações rodam de novo. Para impedir, " +
-      "pause o grupo.";
-    if (!window.confirm(message)) return;
+  const interruptAll = async () => {
+    const ok = await confirm({
+      title: `Interromper tudo no grupo "${groupName}"?`,
+      message: (
+        <>
+          <p>
+            Agora: <strong>{activityText}</strong>.
+          </p>
+          <p>
+            As sequências em andamento são canceladas, as tarefas rodando são encerradas (com os processos que
+            abriram) e as que estão na fila são canceladas.
+          </p>
+          <p>
+            Os agendamentos continuam valendo: no próximo horário as automações rodam de novo. Para impedir,
+            pause o grupo.
+          </p>
+        </>
+      ),
+      confirmLabel: "Interromper tudo",
+      tone: "danger",
+    });
+    if (!ok) return;
     interrupt.mutate(groupId, {
       onSuccess: (r) =>
         toast.success(

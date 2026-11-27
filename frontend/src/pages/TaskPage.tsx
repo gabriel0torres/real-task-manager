@@ -24,6 +24,7 @@ import {
   MISFIRE_LABELS,
   OVERLAP_LABELS,
 } from "../lib/format";
+import { useConfirm } from "../components/Confirm";
 
 const TABS = [
   { id: "overview", label: "Resumo" },
@@ -89,6 +90,7 @@ export function TaskPage() {
   const { data: sub } = useSubcategory(task?.subcategory_id ?? 0);
   const { data: group } = useGroup(task?.group_id ?? 0);
   const update = useUpdateTask();
+  const confirm = useConfirm();
   const remove = useDeleteTask();
   const runTask = useRunTask();
 
@@ -113,8 +115,14 @@ export function TaskPage() {
       },
     );
 
-  const handleDelete = () => {
-    if (!window.confirm(`Excluir a tarefa "${task.name}" e todo o seu histórico?`)) return;
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: `Excluir a tarefa "${task.name}"?`,
+      message: <p>O histórico de execuções da tarefa também será excluído. Não é possível desfazer.</p>,
+      confirmLabel: "Excluir tarefa",
+      tone: "danger",
+    });
+    if (!ok) return;
     remove.mutate(task.id, {
       onSuccess: () => {
         toast.success("Tarefa excluída.");

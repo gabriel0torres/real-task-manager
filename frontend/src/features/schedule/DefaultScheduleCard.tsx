@@ -8,6 +8,7 @@ import { Button, Card, ErrorBox, Field, HelpTip, Select } from "../../components
 import { listTimeZones } from "../../lib/format";
 import { namesList, plural } from "../../lib/schedule";
 import { ScheduleBuilder } from "./ScheduleBuilder";
+import { ConfirmList, useConfirm } from "../../components/Confirm";
 
 const TIME_ZONES = listTimeZones();
 
@@ -47,6 +48,7 @@ export function DefaultScheduleCard({
   onSave: (input: ScheduleInput, done: () => void) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const confirm = useConfirm();
   const [crons, setCrons] = useState(owner.cron_expressions);
   const [timezone, setTimezone] = useState(owner.timezone);
   const [problem, setProblem] = useState<string | null>(null);
@@ -62,19 +64,29 @@ export function DefaultScheduleCard({
     setEditing(true);
   };
 
-  const save = () => {
+  const save = async () => {
     setShowProblem(true);
     if (problem) return;
     if (affected.length > 0) {
-      const lines = [
-        `Esta alteração vale para ${plural(affected.length, "tarefa que herda", "tarefas que herdam")} o agendamento: ${namesList(affected)}.`,
-      ];
-      if (ownSchedule.length) {
-        lines.push(
-          `${plural(ownSchedule.length, "tarefa tem", "tarefas têm")} agendamento próprio e não muda(m): ${namesList(ownSchedule)}.`,
-        );
-      }
-      if (!window.confirm(`${lines.join("\n\n")}\n\nSalvar?`)) return;
+      const ok = await confirm({
+        title: "Salvar o agendamento padrão?",
+        message: (
+          <>
+            <p>
+              Vale para {plural(affected.length, "tarefa que herda", "tarefas que herdam")} o agendamento:
+            </p>
+            <ConfirmList items={affected.map((t) => t.name)} />
+            {ownSchedule.length > 0 && (
+              <>
+                <p>Não mudam ({plural(ownSchedule.length, "tem", "têm")} agendamento próprio):</p>
+                <ConfirmList items={ownSchedule.map((t) => t.name)} />
+              </>
+            )}
+          </>
+        ),
+        confirmLabel: "Salvar agendamento",
+      });
+      if (!ok) return;
     }
     onSave({ cron_expressions: crons, timezone }, () => setEditing(false));
   };
